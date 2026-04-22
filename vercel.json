@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Permissions-Policy", "value": "camera=*" },
+        { "key": "Feature-Policy",     "value": "camera *" }
+      ]
+    }
+  ]
+}

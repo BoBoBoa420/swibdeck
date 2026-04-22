@@ -1,0 +1,10 @@
+{
+  "short_name": "SwibDeck",
+  "name": "SwibDeck Scanner — SwibSwap",
+  "description": "TCG Card Scanner. Scan cards, get live prices in Thai Baht, list on SwibSwap.",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0D111A",
+  "background_color": "#0D111A"
+}
