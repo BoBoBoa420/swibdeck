@@ -2,7 +2,7 @@
 
 TCG card scanner app by SwibSwap. Scans One Piece, Pokémon, Yugioh cards using your iPhone camera and shows live Thai Baht prices.
 
-## Deploy to Vercel (5 minutes, free)
+## Deploy to Vercel (5 minutes, free) 
 
 1. Go to https://vercel.com and sign up with GitHub
 2. Click "Add New Project"
