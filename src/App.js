@@ -1,26 +1,25 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BoBoa Scanner · v7
-   - Real card data from free public APIs (apitcg.com, ygoprodeck.com)
-   - Multi-source DB crosscheck (One Piece, Yu-Gi-Oh!, Pokémon)
-   - Card number region hints per TCG (bottom-right OP, bottom-left YGO)
-   - Full-screen viewfinder — card fills entire screen
-   - Max camera quality (4K, continuous autofocus)
-   - Photo OR Upload mode
-   - AI candidates → user picks → DB lookup fills full description
-   - Yuyu-tei buyback + multi-source pricing
-   - Consistent Syne typography throughout
+   BoBoa Scanner · v9
+   - REAL pricing via deep-links to Mercari/eBay/Yuyu-tei/Yahoo Auctions
+   - Rarity-sensitive search queries (uses Yuyu-tei JP abbreviations)
+   - Correct OCG (JP) vs TCG (EN) rarity systems per official sources
+   - Card DB lookup via free public APIs (YGOProDeck, apitcg.com, optcgapi.com)
+   - Last-sold tab + Current-listings tab (both deep-linked)
+   - Image viewer with pinch/zoom for corner photos
+   - Locked 4K camera, no zoom lock drift
+   - No more seed data — if we can't find it, we say so and provide search links
 ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Currency ────────────────────────────────────────────────────────────── */
+/* ── Currency & formatting ───────────────────────────────────────────────── */
 const FX = { USD_THB: 35, JPY_THB: 0.24, JPY_USD: 0.0068 };
-const toTHB = (n, cur) => Math.round(!n ? 0 : cur === "JPY" ? n * FX.JPY_THB : cur === "USD" ? n * FX.USD_THB : n);
-const toUSD = (n, cur) => !n ? 0 : cur === "JPY" ? Math.round(n * FX.JPY_USD * 100) / 100 : cur === "THB" ? Math.round(n / FX.USD_THB * 100) / 100 : n;
+const toTHB = (n, cur="JPY") => Math.round(!n ? 0 : cur === "JPY" ? n * FX.JPY_THB : cur === "USD" ? n * FX.USD_THB : n);
+const toUSD = (n, cur="JPY") => !n ? 0 : cur === "JPY" ? Math.round(n * FX.JPY_USD * 100) / 100 : cur === "THB" ? Math.round(n / FX.USD_THB * 100) / 100 : n;
 const fmtTHB = n => "฿" + Math.round(n || 0).toLocaleString();
 const fmtUSD = n => "$" + (Number(n || 0) % 1 === 0 ? Number(n).toFixed(0) : Number(n).toFixed(2));
 const fmtJPY = n => "¥" + Math.round(n || 0).toLocaleString();
-const hex2rgb = (h, a) => { const r = parseInt(h.slice(1,3),16), g = parseInt(h.slice(3,5),16), b = parseInt(h.slice(5,7),16); return `rgba(${r},${g},${b},${a})`; };
+const rgba = (h, a) => { const r=parseInt(h.slice(1,3),16),g=parseInt(h.slice(3,5),16),b=parseInt(h.slice(5,7),16); return `rgba(${r},${g},${b},${a})`; };
 
 /* ── Palette ─────────────────────────────────────────────────────────────── */
 const C = {
@@ -58,8 +57,7 @@ button{cursor:pointer;}
 .r5{animation:rise .42s .28s cubic-bezier(.2,.8,.2,1) both}
 `;
 
-// roundRect polyfill
-if (typeof window !== "undefined" && CanvasRenderingContext2D && !CanvasRenderingContext2D.prototype.roundRect) {
+if (typeof window !== "undefined" && typeof CanvasRenderingContext2D !== "undefined" && !CanvasRenderingContext2D.prototype.roundRect) {
   CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
     if(typeof r==="number")r=[r,r,r,r];
     this.beginPath();this.moveTo(x+r[0],y);this.lineTo(x+w-r[1],y);
@@ -71,19 +69,20 @@ if (typeof window !== "undefined" && CanvasRenderingContext2D && !CanvasRenderin
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   TCG CONFIG
+   TCG + LANGUAGE CONFIG (Pokémon/Chinese removed)
 ═══════════════════════════════════════════════════════════════════════════ */
 const TCG_TYPES = [
-  { id:"onepiece", name:"One Piece", shortName:"OP TCG", emoji:"⚓", color:C.coral,
-    codeHint:"Card number bottom-right, e.g. OP07-051, ST30-001, EB01-023",
+  {
+    id:"onepiece", name:"One Piece", shortName:"OP TCG", color:C.coral,
+    codeHint:"Bottom-right card code, e.g. OP07-051, ST30-001",
     codeRegion:"bottom-right",
-    // SVG logo placeholder — stylized card silhouette
+    // Circular pirate-emblem style SVG logo
     logo: (color) => `
       <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <linearGradient id="op-g" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stop-color="${color}" stop-opacity="1"/>
-            <stop offset="100%" stop-color="${color}" stop-opacity="0.7"/>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0.65"/>
           </linearGradient>
         </defs>
         <circle cx="50" cy="50" r="38" fill="none" stroke="url(#op-g)" stroke-width="4"/>
@@ -92,10 +91,12 @@ const TCG_TYPES = [
         <circle cx="58" cy="44" r="3" fill="#fff"/>
         <path d="M 40 58 Q 50 64 60 58" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
         <text x="50" y="90" text-anchor="middle" font-family="Inter Tight" font-weight="800" font-size="11" fill="${color}">ONE PIECE</text>
-      </svg>` },
-  { id:"yugioh",  name:"Yu-Gi-Oh!", shortName:"YGO OCG", emoji:"🎴", color:C.lavDk,
-    codeHint:"Card number bottom-left below artwork, e.g. LOCR-JP001, LOB-001",
-    codeRegion:"bottom-left below artwork",
+      </svg>`,
+  },
+  {
+    id:"yugioh", name:"Yu-Gi-Oh!", shortName:"YGO OCG", color:C.lavDk,
+    codeHint:"Bottom-right card code, e.g. LOCH-JP003, LOB-001",
+    codeRegion:"bottom-right below artwork",
     logo: (color) => `
       <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
         <defs>
@@ -109,7 +110,8 @@ const TCG_TYPES = [
         <circle cx="50" cy="50" r="10" fill="#fff"/>
         <circle cx="50" cy="50" r="4" fill="${color}"/>
         <text x="50" y="98" text-anchor="middle" font-family="Inter Tight" font-weight="800" font-size="10" fill="${color}">遊戯王 OCG</text>
-      </svg>` },
+      </svg>`,
+  },
 ];
 
 const LANGUAGES = [
@@ -117,174 +119,349 @@ const LANGUAGES = [
   { id:"EN", label:"English",  flag:"🇬🇧", note:"TCG / EN print" },
 ];
 
-const RARITIES = {
-  onepiece:[
-    {id:"C",    label:"C",        color:C.dim},    {id:"UC",   label:"UC",       color:C.sageDk},
-    {id:"R",    label:"R",        color:C.skyDk},  {id:"SR",   label:"SR",       color:C.butterDk},
-    {id:"SR-P", label:"SR Alt",   color:C.peachDk},{id:"SR-M", label:"SR Manga", color:C.coral},
-    {id:"SR-SP",label:"SR SP",    color:C.rose},   {id:"L",    label:"L",        color:C.roseDk},
-    {id:"L-P",  label:"L Para",   color:C.lavDk},  {id:"SEC",  label:"SEC",      color:C.lav},
-    {id:"PROMO",label:"PROMO",    color:C.lav},
-  ],
-  yugioh:[
-    {id:"C",   label:"C",         color:C.dim},    {id:"R",    label:"R",        color:C.skyDk},
-    {id:"SR",  label:"SR",        color:C.butterDk},{id:"UR",  label:"UR",       color:C.peachDk},
-    {id:"SCR", label:"SCR",       color:C.coral},  {id:"UTR",  label:"UTR",      color:C.lavDk},
-    {id:"GR",  label:"Ghost",     color:C.lav},    {id:"StR",  label:"Starlight", color:C.sageDk},
-    {id:"CR",  label:"Collector", color:C.rose},   {id:"ORsr", label:"OR",        color:C.roseDk},
-    {id:"QCSR",label:"QCSR",      color:C.butterDk},
-  ],
-};
-
 /* ═══════════════════════════════════════════════════════════════════════════
-   CARD DATABASE (seed — Yuyu-tei verified prices)
+   RARITY SYSTEMS — per official sources
+   - One Piece: same rarity codes in JP and EN (C/UC/R/SR/L/SEC/SP + parallels)
+     Yuyu-tei adds M (Manga Rare), P (Parallel star), SR-P for Alt Art
+   - Yu-Gi-Oh! OCG JP (Yuyu-tei): N/NP/R/SR/UR/ULR(relief)/SE(secret)/PSE/20thSE
+     /QCSE(quarter century)/GR(ghost)/KC(king's court)/holo
+   - Yu-Gi-Oh! TCG EN: C/R/SR/UR/UtR/ScR/PScR/StR/CR/GR/QCSR
 ═══════════════════════════════════════════════════════════════════════════ */
-const CARD_DB = {
-  "ST30-001":   { tcg:"onepiece", name:"Luffy & Ace",        nameJP:"ルフィ＆エース",     set:"ST-30", setName:"Luffy & Ace Starter Deck EX", slug:"st30",
-    rarities:{"L-P":{buy:40000,sell:59800},"L":{buy:800,sell:1280}} },
-  "OP07-051":   { tcg:"onepiece", name:"Boa Hancock",        nameJP:"ボア・ハンコック",    set:"OP-07", setName:"500 Years in the Future",     slug:"op07",
-    rarities:{"SR":{buy:2800,sell:4500},"SR-P":{buy:8500,sell:14000},"SR-M":{buy:18000,sell:28000},"SR-SP":{buy:42000,sell:65000}}, type:"Character", color:"Blue", cost:6, power:"8000", traits:["Seven Warlords","Kuja Pirates"], ability:"[On Play] Up to 1 opponent Character can't attack next turn. Return 1 Cost≤1 to bottom of deck." },
-  "ST17-004":   { tcg:"onepiece", name:"Boa Hancock",        nameJP:"ボア・ハンコック",    set:"ST-17", setName:"Royal Blood",                 slug:"st17",
-    rarities:{"SR":{buy:800,sell:1200}}, type:"Character", color:"Blue", cost:4, power:"6000" },
-  "OP09-001":   { tcg:"onepiece", name:"Monkey D. Luffy",    nameJP:"モンキー・D・ルフィ", set:"OP-09", setName:"Emperors in the New World",   slug:"op09",
-    rarities:{"L":{buy:2800,sell:4200},"SEC":{buy:38000,sell:55000}} },
-  "LOCR-JP001": { tcg:"yugioh",   name:"Blue-Eyes (Overrush)",nameJP:"白き幻獣-青眼の白龍",set:"LOCR",  setName:"Limit Over Collection - The Rivals", slug:"locr",
-    rarities:{"ORsr":{buy:42000,sell:69800},"UR":{buy:42000,sell:69800}} },
-  "LOB-001":    { tcg:"yugioh",   name:"Blue-Eyes White Dragon",nameJP:"青眼の白龍",       set:"LOB",   setName:"Legend of Blue Eyes",         slug:"lob",
-    rarities:{"R":{buy:800,sell:1500},"UR":{buy:7500,sell:12000},"SCR":{buy:28000,sell:45000}} },
+const RARITIES = {
+  onepiece: {
+    JP: [
+      {id:"C",    label:"C",       full:"Common",              color:C.dim},
+      {id:"UC",   label:"UC",      full:"Uncommon",            color:C.sageDk},
+      {id:"R",    label:"R",       full:"Rare",                color:C.skyDk},
+      {id:"SR",   label:"SR",      full:"Super Rare",          color:C.butterDk},
+      {id:"SR-P", label:"SR★",     full:"SR Parallel (Alt)",   color:C.peachDk},
+      {id:"L",    label:"L",       full:"Leader",              color:C.roseDk},
+      {id:"L-P",  label:"L★",      full:"Leader Parallel",     color:C.lavDk},
+      {id:"SEC",  label:"SEC",     full:"Secret Rare",         color:C.coral},
+      {id:"SEC-P",label:"SEC★",    full:"SEC Parallel",        color:C.rose},
+      {id:"SP",   label:"SP",      full:"Special (Manga)",     color:C.lav},
+      {id:"MR",   label:"MR",      full:"Manga Rare",          color:C.lavDk},
+      {id:"TR",   label:"TR",      full:"Treasure Rare",       color:C.butterDk},
+      {id:"PR",   label:"PR",      full:"Promo",               color:C.sub},
+    ],
+    EN: [
+      {id:"C",    label:"C",       full:"Common",              color:C.dim},
+      {id:"UC",   label:"UC",      full:"Uncommon",            color:C.sageDk},
+      {id:"R",    label:"R",       full:"Rare",                color:C.skyDk},
+      {id:"SR",   label:"SR",      full:"Super Rare",          color:C.butterDk},
+      {id:"SR-AA",label:"SR AA",   full:"SR Alternate Art",    color:C.peachDk},
+      {id:"L",    label:"L",       full:"Leader",              color:C.roseDk},
+      {id:"L-P",  label:"L AA",    full:"Leader Alternate Art",color:C.lavDk},
+      {id:"SEC",  label:"SEC",     full:"Secret Rare",         color:C.coral},
+      {id:"SEC-AA",label:"SEC AA", full:"SEC Alternate Art",   color:C.rose},
+      {id:"SP",   label:"SP",      full:"Special",             color:C.lav},
+      {id:"MR",   label:"Manga",   full:"Manga Rare",          color:C.lavDk},
+      {id:"TR",   label:"TR",      full:"Treasure Rare",       color:C.butterDk},
+      {id:"PR",   label:"Promo",   full:"Promo",               color:C.sub},
+    ],
+  },
+  yugioh: {
+    // Japanese OCG — Yuyu-tei naming convention
+    JP: [
+      {id:"N",    label:"N",       full:"Normal (普通)",        color:C.dim},
+      {id:"NP",   label:"NP",      full:"Normal Parallel",     color:C.sage},
+      {id:"R",    label:"R",       full:"Rare (レア)",           color:C.skyDk},
+      {id:"RP",   label:"RP",      full:"Rare Parallel",       color:C.sky},
+      {id:"SR",   label:"SR",      full:"Super Rare (スーパー)",  color:C.butterDk},
+      {id:"UR",   label:"UR",      full:"Ultra Rare (ウルトラ)",  color:C.peachDk},
+      {id:"ULR",  label:"ULR",     full:"Ultimate / Relief (レリーフ)", color:C.roseDk},
+      {id:"SER",  label:"SE",      full:"Secret Rare (シークレット)", color:C.coral},
+      {id:"PSE",  label:"PSE",     full:"Prismatic Secret",    color:C.rose},
+      {id:"20TH", label:"20th SE", full:"20th Secret Rare",    color:C.lav},
+      {id:"QCSE", label:"QCSE",    full:"Quarter Century Secret", color:C.butterDk},
+      {id:"GR",   label:"GR",      full:"Ghost Rare (ゴースト)",   color:C.lavDk},
+      {id:"KC",   label:"KC",      full:"Kings Court / Collector", color:C.rose},
+      {id:"HOL",  label:"HOL",     full:"Holographic",         color:C.lavDk},
+      {id:"ORsr", label:"ORsr",    full:"Overrush Rare",       color:C.coral},
+    ],
+    // English TCG
+    EN: [
+      {id:"C",    label:"C",       full:"Common",              color:C.dim},
+      {id:"R",    label:"R",       full:"Rare",                color:C.skyDk},
+      {id:"SR",   label:"SR",      full:"Super Rare",          color:C.butterDk},
+      {id:"UR",   label:"UR",      full:"Ultra Rare",          color:C.peachDk},
+      {id:"UtR",  label:"UtR",     full:"Ultimate Rare",       color:C.roseDk},
+      {id:"ScR",  label:"ScR",     full:"Secret Rare",         color:C.coral},
+      {id:"PScR", label:"PScR",    full:"Prismatic Secret",    color:C.rose},
+      {id:"StR",  label:"StR",     full:"Starlight Rare",      color:C.sageDk},
+      {id:"CR",   label:"CR",      full:"Collector's Rare",    color:C.lav},
+      {id:"GR",   label:"GR",      full:"Ghost Rare",          color:C.lavDk},
+      {id:"QCSR", label:"QCSR",    full:"Quarter Century Secret", color:C.butterDk},
+      {id:"GoldR",label:"Gold",    full:"Gold Rare",           color:C.butter},
+      {id:"PlatR",label:"PltR",    full:"Platinum Rare",       color:C.skyDk},
+    ],
+  },
 };
 
 const TCG_SLUG = { onepiece:"opc", yugioh:"ygo" };
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   PRICING ENGINE
-═══════════════════════════════════════════════════════════════════════════ */
-const SOURCES = [
-  {id:"yuyutei",  name:"Yuyu-tei",     icon:"🏯", color:C.coral,   cur:"JPY", region:"JP",  mult:1.00},
-  {id:"mercari",  name:"Mercari JP",   icon:"🟠", color:C.roseDk,  cur:"JPY", region:"JP",  mult:0.92},
-  {id:"rakuten",  name:"Rakuten",      icon:"🟣", color:C.lavDk,   cur:"JPY", region:"JP",  mult:0.98},
-  {id:"ebay",     name:"eBay",         icon:"🛒", color:C.butterDk,cur:"USD", region:"GL",  mult:1.18},
-  {id:"tcgplayer",name:"TCGPlayer",    icon:"🎯", color:C.skyDk,   cur:"USD", region:"GL",  mult:1.08},
-  {id:"pcg",      name:"PriceCharting",icon:"📈", color:C.sageDk,  cur:"USD", region:"GL",  mult:1.00},
-  {id:"tcgcorner",name:"TCG Corner",   icon:"🇹🇭",color:C.lav,     cur:"THB", region:"TH",  mult:1.10},
-];
+   DEEP-LINK BUILDERS — rarity-sensitive search URLs that actually work.
+   These open in the user's browser so they see REAL live data from each site.
 
-function genSales({ basePriceJPY, sourceId, monthsBack }) {
-  const src = SOURCES.find(s => s.id === sourceId);
-  if (!src) return [];
-  const count = Math.floor(monthsBack * 1.4);
-  const sales = [];
-  const now = new Date();
-  for (let i = 0; i < count; i++) {
-    const daysAgo = Math.floor((i / count) * monthsBack * 30) + Math.floor(Math.random() * 12);
-    const d = new Date(now); d.setDate(d.getDate() - daysAgo);
-    const variance = (Math.random() - 0.48) * 0.3;
-    const trend = Math.sin((i / count) * Math.PI * 1.5) * 0.08;
-    const raw = basePriceJPY * src.mult * (1 + variance + trend);
-    const priceJPY = Math.max(Math.round(raw), 100);
-    const priceNative = src.cur === "USD" ? toUSD(priceJPY, "JPY") : src.cur === "THB" ? toTHB(priceJPY, "JPY") : priceJPY;
-    sales.push({
-      date: d.toISOString().slice(0,10),
-      priceNative, currency: src.cur,
-      priceTHB: toTHB(priceJPY, "JPY"),
-      priceUSD: toUSD(priceJPY, "JPY"),
-      sourceId, sourceName: src.name, sourceColor: src.color, icon: src.icon,
+   Rationale: scraping Mercari/eBay/Yuyu-tei from a server reliably fails
+   (CORS, Cloudflare, client-side rendering, bot detection). But directly
+   opening the search URL in a browser ALWAYS works. This is what actually
+   works in practice — tested live in user screenshots.
+═══════════════════════════════════════════════════════════════════════════ */
+function buildSearchLinks({ cardId, cardName, rarityLabel, tcg, language, setSlug }) {
+  const q = (s) => encodeURIComponent(s);
+  const id = cardId || "";
+  const nm = cardName || "";
+  const rar = rarityLabel || "";
+  // For rarity-sensitive queries, combine card number + name + rarity
+  const rarityQuery = (s) => [s, rar].filter(Boolean).join(" ");
+
+  const links = [];
+
+  // ── MERCARI JP ──────────────────────────────────────────────────────────
+  // Sold listings (last sold prices, rarity-aware)
+  const mercariSoldQ = rarityQuery(`${id} ${nm}`.trim());
+  links.push({
+    id: "mercari-sold",
+    name: "Mercari JP · Last sold",
+    icon: "🟠", color: C.roseDk,
+    category: "sold",
+    url: `https://jp.mercari.com/search?keyword=${q(mercariSoldQ)}&status=sold_out&sort=created_time&order=desc`,
+    note: "Sold listings by card # + rarity",
+  });
+  // Active listings
+  links.push({
+    id: "mercari-active",
+    name: "Mercari JP · Current",
+    icon: "🟠", color: C.roseDk,
+    category: "active",
+    url: `https://jp.mercari.com/search?keyword=${q(mercariSoldQ)}&status=on_sale&sort=price&order=asc`,
+    note: "Cheapest active listings",
+  });
+
+  // ── YAHOO AUCTIONS JP ───────────────────────────────────────────────────
+  // Closed / ended auctions = last-sold prices
+  links.push({
+    id: "yahoo-closed",
+    name: "Yahoo Auctions JP · Ended",
+    icon: "🅾", color: C.lav,
+    category: "sold",
+    url: `https://auctions.yahoo.co.jp/closedsearch/closedsearch?p=${q(mercariSoldQ)}&n=50`,
+    note: "Closed auctions (ended prices)",
+  });
+  links.push({
+    id: "yahoo-active",
+    name: "Yahoo Auctions JP · Active",
+    icon: "🅾", color: C.lav,
+    category: "active",
+    url: `https://auctions.yahoo.co.jp/search/search?p=${q(mercariSoldQ)}&n=50`,
+    note: "Active auctions",
+  });
+
+  // ── YUYU-TEI (buyback & retail) ─────────────────────────────────────────
+  if (setSlug) {
+    links.push({
+      id: "yuyutei-buy",
+      name: "Yuyu-tei · 買取 (shop buys)",
+      icon: "🏯", color: C.coral,
+      category: "sold",
+      url: `https://yuyu-tei.jp/buy/${TCG_SLUG[tcg]}/s/${setSlug.toLowerCase()}`,
+      note: "Shop buyback price — guaranteed sell",
+    });
+    links.push({
+      id: "yuyutei-sell",
+      name: "Yuyu-tei · 販売 (retail)",
+      icon: "🏯", color: C.coral,
+      category: "active",
+      url: `https://yuyu-tei.jp/sell/${TCG_SLUG[tcg]}/s/${setSlug.toLowerCase()}`,
+      note: "Shop retail — verified market",
+    });
+  } else {
+    // Fallback — top-level search
+    links.push({
+      id: "yuyutei-search",
+      name: "Yuyu-tei · Search",
+      icon: "🏯", color: C.coral,
+      category: "active",
+      url: `https://yuyu-tei.jp/top/${TCG_SLUG[tcg]}`,
+      note: "Browse Yuyu-tei shop",
     });
   }
-  return sales.sort((a,b) => new Date(b.date)-new Date(a.date));
-}
 
-function getPriceData({ cardId, rarity, language }) {
-  const card = CARD_DB[cardId];
-  const rar  = card?.rarities?.[rarity];
-  if (!card || !rar) return null;
-
-  const srcIds = language === "JP"
-    ? ["yuyutei","mercari","rakuten","pcg","ebay"]
-    : ["ebay","tcgplayer","pcg","tcgcorner"];
-
-  const yuyutei = {
-    buy:  { jpy:rar.buy,  thb:toTHB(rar.buy,"JPY"),  usd:toUSD(rar.buy,"JPY"),  url:`https://yuyu-tei.jp/buy/${TCG_SLUG[card.tcg]}/s/${card.slug}` },
-    sell: { jpy:rar.sell, thb:toTHB(rar.sell,"JPY"), usd:toUSD(rar.sell,"JPY"), url:`https://yuyu-tei.jp/sell/${TCG_SLUG[card.tcg]}/s/${card.slug}` },
-  };
-
-  const sources = srcIds.map(sid => {
-    const src = SOURCES.find(s=>s.id===sid);
-    if(!src) return null;
-    const sales = genSales({ basePriceJPY: rar.sell, sourceId: sid, monthsBack: 36 });
-    return { ...src, sales };
-  }).filter(Boolean);
-
-  const allSales = sources.flatMap(s=>s.sales).sort((a,b)=>new Date(b.date)-new Date(a.date));
-
-  const monthMap = new Map();
-  allSales.forEach(s => {
-    const ym = s.date.slice(0,7);
-    if(!monthMap.has(ym)) monthMap.set(ym,[]);
-    monthMap.get(ym).push(s.priceTHB);
+  // ── eBay ─────────────────────────────────────────────────────────────────
+  // Sold + Completed listings with rarity-sensitive query
+  const ebayQ = language === "JP"
+    ? [id, rar, "Japanese"].filter(Boolean).join(" ")
+    : [id, nm, rar].filter(Boolean).join(" ");
+  links.push({
+    id: "ebay-sold",
+    name: "eBay · Sold listings",
+    icon: "🛒", color: C.butterDk,
+    category: "sold",
+    url: `https://www.ebay.com/sch/i.html?_nkw=${q(ebayQ)}&LH_Sold=1&LH_Complete=1&_ipg=240&_sop=13`,
+    note: "Completed sales worldwide",
   });
-  const chart = [...monthMap.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([m,pp])=>({
-    month:m,
-    avg:Math.round(pp.reduce((a,b)=>a+b,0)/pp.length),
-    min:Math.min(...pp), max:Math.max(...pp), n:pp.length,
-  }));
+  links.push({
+    id: "ebay-active",
+    name: "eBay · Active listings",
+    icon: "🛒", color: C.butterDk,
+    category: "active",
+    url: `https://www.ebay.com/sch/i.html?_nkw=${q(ebayQ)}&_ipg=240&_sop=15`,
+    note: "Current listings, cheapest first",
+  });
 
-  const srcLinks = {
-    mercari: (q) => `https://jp.mercari.com/search?keyword=${encodeURIComponent(q)}`,
-    rakuten: (q) => `https://search.rakuten.co.jp/search/mall/${encodeURIComponent(q)}/`,
-    ebay:    (q) => `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}`,
-    tcgplayer:(q)=> `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(q)}`,
-    pcg:     (q) => `https://www.pricecharting.com/search-products?q=${encodeURIComponent(q)}`,
-    yuyutei: ()  => yuyutei.sell.url,
-    tcgcorner:(q)=> `https://www.google.com/search?q=tcg-corner.com+${encodeURIComponent(q)}`,
-  };
+  // ── TCGPlayer (EN only) ─────────────────────────────────────────────────
+  if (language === "EN") {
+    links.push({
+      id: "tcgplayer",
+      name: "TCGPlayer · Prices",
+      icon: "🎯", color: C.skyDk,
+      category: "active",
+      url: `https://www.tcgplayer.com/search/all/product?q=${q(id + " " + nm)}&productLineName=${tcg==="onepiece"?"one-piece":"yugioh"}`,
+      note: "US market retail",
+    });
+  }
 
-  return { yuyutei, sources, allSales, chart, card, rarity, srcLinks };
+  // ── snkrdunk (for One Piece DON!! cards specifically) ───────────────────
+  if (tcg === "onepiece") {
+    links.push({
+      id: "snkrdunk",
+      name: "snkrdunk JP",
+      icon: "👟", color: C.sageDk,
+      category: "both",
+      url: `https://snkrdunk.com/search?keyword=${q(id + " " + nm)}`,
+      note: "Popular for DON!! and graded",
+    });
+  }
+
+  // ── PriceCharting ───────────────────────────────────────────────────────
+  links.push({
+    id: "pricecharting",
+    name: "PriceCharting · History",
+    icon: "📈", color: C.sageDk,
+    category: "sold",
+    url: `https://www.pricecharting.com/search-products?q=${q(id + " " + nm + " " + rar)}`,
+    note: "Multi-source sale history",
+  });
+
+  // ── Limitless TCG (card info) ───────────────────────────────────────────
+  if (tcg === "onepiece") {
+    links.push({
+      id: "limitless",
+      name: "Limitless · Card info",
+      icon: "♾", color: C.lavDk,
+      category: "info",
+      url: `https://onepiece.limitlesstcg.com/cards/${id}`,
+      note: "Full card database page",
+    });
+  } else if (tcg === "yugioh") {
+    links.push({
+      id: "ygoprodeck",
+      name: "YGOProDeck · Card info",
+      icon: "🎴", color: C.lavDk,
+      category: "info",
+      url: `https://ygoprodeck.com/card-search/?cardSet=${q(id)}`,
+      note: "Full card database page",
+    });
+  }
+
+  return links;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BOBOA AI — Candidate identification + quality grading
+   LIVE CARD LOOKUP — calls our /api/cardlookup → apitcg.com + ygoprodeck
+   Returns real card data (name, description, image, etc.) when card is found
+═══════════════════════════════════════════════════════════════════════════ */
+async function lookupCard({ cardId, tcg, language, fallbackName }) {
+  try {
+    const res = await fetch(
+      `/api/cardlookup?id=${encodeURIComponent(cardId)}&tcg=${tcg}&lang=${language}`,
+      { signal: AbortSignal.timeout(10000) }
+    );
+    if (!res.ok) throw new Error("API " + res.status);
+    const data = await res.json();
+    if (data.found) {
+      return {
+        ok: true,
+        cardId: data.cardId || cardId,
+        name: data.name || fallbackName || `Card ${cardId}`,
+        nameJP: data.nameJP || "",
+        set: data.set || "",
+        setName: data.setName || "",
+        rarityFromDB: data.rarity || "",
+        type: data.type || "",
+        color: data.color || "",
+        cost: data.cost ?? null,
+        power: data.power || null,
+        ability: data.ability || "",
+        image: data.image || null,
+        atk: data.atk, def: data.def, level: data.level,
+        attribute: data.attribute, race: data.race, archetype: data.archetype,
+        dbSources: data.sources || [],
+        setSlug: inferSetSlug(cardId, tcg),
+      };
+    }
+  } catch(e) {
+    console.warn("Card lookup failed:", e.message);
+  }
+  // No fake fallback — just return minimal shell with fallback name
+  return {
+    ok: false,
+    cardId,
+    name: fallbackName || `Card ${cardId}`,
+    setSlug: inferSetSlug(cardId, tcg),
+    dbSources: [],
+  };
+}
+
+// Infer Yuyu-tei set slug from card ID (e.g. "OP07-051" → "op07", "LOCH-JP003" → "loch")
+function inferSetSlug(cardId, tcg) {
+  if (!cardId) return null;
+  const m = cardId.match(/^([A-Z]+\d*)/i);
+  if (!m) return null;
+  return m[1].toLowerCase();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BoBoa AI — identify card + detect rarity from image
 ═══════════════════════════════════════════════════════════════════════════ */
 async function boboaIdentify({ imageDataUrl, tcgType, language }) {
   const base64 = imageDataUrl.split(",")[1];
-  const tcg = TCG_TYPES.find(t=>t.id===tcgType);
+  const tcg = TCG_TYPES.find(t => t.id === tcgType);
+  const rarities = RARITIES[tcgType]?.[language] || [];
+  const raritiesList = rarities.map(r => `${r.id} (${r.full})`).join(", ");
 
-  const prompt = `You are BoBoa Scanner — an expert TCG card identification engine.
+  const prompt = `You are BoBoa Scanner — TCG card identification engine.
 
-TCG selected: ${tcg?.name || tcgType}
-Language selected: ${language}
+TCG: ${tcg?.name}
+Language: ${language} ${language === "JP" ? "(Japanese OCG — original characters preserved)" : "(English TCG)"}
 
-STEP 1 — IDENTIFY: Scan the entire card image carefully. Look for:
-- The card code/number (${tcg?.codeHint || "bottom corner"})
-- The card name (top or center)
-- Any other text that confirms identity
+IDENTIFY the card. Read the bottom-right card code carefully (this is the most reliable identifier).
+For ${tcg?.name}: ${tcg?.codeHint}
 
-STEP 2 — LIST CANDIDATES: Return up to 4 possible card IDs ranked by confidence.
+RARITY — look for rarity indicator in bottom-right corner. Valid rarities for this TCG+language:
+${raritiesList}
 
-STEP 3 — LANGUAGE: Read the actual text on the card to confirm language.
-
-Respond with ONLY valid JSON, no markdown:
+Return ONLY valid JSON, no markdown fences:
 {
   "candidates": [
     {
-      "cardId": "exact code you can READ from the card e.g. OP07-051",
-      "name": "card name in English",
-      "nameOriginal": "name in card's language",
-      "set": "set code",
-      "setName": "set name",
-      "rarity": "rarity you can see",
+      "cardId": "exact code you can READ from the card e.g. OP07-051 or LOCH-JP003",
+      "name": "card name in English (translate if Japanese)",
+      "nameOriginal": "name as printed on the card",
+      "set": "set code e.g. OP07 or LOCH",
+      "setName": "set name if visible",
+      "rarity": "rarity ID matching one from the list above",
       "confidence": 0-100,
-      "evidence": "what specifically you saw that identifies this card"
+      "evidence": "specifically what text/marker you saw"
     }
   ],
-  "language": "JP or EN or CN",
-  "languageEvidence": "what text/script confirmed the language",
-  "matchesTCGType": true or false,
-  "cardIdRegion": "where the code is on this card e.g. bottom-right"
+  "language": "JP or EN",
+  "cardIdRegion": "where you found the code, e.g. bottom-right"
 }
 
-If you cannot read the card number clearly, still give your best guess in candidates[0] with low confidence.
-Always provide at least 1 candidate.`;
+Up to 4 candidates, most confident first. Always provide at least 1 candidate even at low confidence.`;
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -298,314 +475,213 @@ Always provide at least 1 candidate.`;
       }),
     });
     const data = await res.json();
-    const text = data.content?.map(c=>c.text||"").join("") || "";
-    return { success:true, data: JSON.parse(text.replace(/```json|```/g,"").trim()) };
-  } catch(e) {
-    return { success:false, error:e.message };
-  }
-}
-
-async function boboaGrade({ imageDataUrl }) {
-  const base64 = imageDataUrl.split(",")[1];
-
-  const prompt = `You are BoBoaGrade — a professional TCG card grading engine using BGS (Beckett Grading Services) criteria.
-
-Examine this card image VERY carefully for every visible defect.
-
-BGS grading reference:
-- 10.0 (Black Label Pristine): Absolutely perfect in every way. No defects visible under 2× magnification.
-- 9.5 (Gem Mint): Nearly perfect. May have very minor flaw visible only under magnification.
-- 9.0 (Mint): Virtually perfect. One minor flaw allowed.
-- 8.5 (NM-MT+): Above average. Very light wear.
-- 8.0 (NM-MT): Light wear on corners/edges.
-- 7.0 (Near Mint): Light wear noticeable to naked eye.
-- 6.0 (Excellent-Mint): Moderate wear, minor creases possible.
-
-CENTERING: Measure the border ratios. BGS 10 requires ≤55/45 front, ≤60/40 back.
-CORNERS: Inspect all 4 corners for fraying, whitening, rounding, or bending.
-EDGES: Check all 4 edges for chipping, nicks, roughness, or dents.
-SURFACE: Look for scratches, print lines, print dots, stains, indentations, or holo scratches.
-
-Respond ONLY with valid JSON, no markdown:
-{
-  "centering": {
-    "score": 0-100,
-    "bgs": 0.0-10.0 (0.5 steps),
-    "leftBorderPct": estimated %,
-    "rightBorderPct": estimated %,
-    "topBorderPct": estimated %,
-    "bottomBorderPct": estimated %,
-    "notes": "specific observation e.g. shifted 8% left"
-  },
-  "corners": {
-    "score": 0-100,
-    "bgs": 0.0-10.0,
-    "worstCorner": "TL/TR/BL/BR",
-    "notes": "specific defects observed or none"
-  },
-  "edges": {
-    "score": 0-100,
-    "bgs": 0.0-10.0,
-    "worstEdge": "top/bottom/left/right",
-    "notes": "specific defects or none"
-  },
-  "surface": {
-    "score": 0-100,
-    "bgs": 0.0-10.0,
-    "defectsFound": ["list", "of", "defects"] or [],
-    "notes": "specific observation"
-  },
-  "overall": {
-    "score": 0-100,
-    "bgs": 0.0-10.0,
-    "label": "BGS 10 PRISTINE / BGS 9.5 GEM MINT / BGS 9 MINT / etc.",
-    "submissionAdvice": "e.g. PSA submission recommended / too risky for grading",
-    "estimatedPSA": "PSA 10 / PSA 9 / PSA 8 / etc.",
-    "summary": "2-3 sentence overall assessment"
-  },
-  "imageQuality": "good/poor/too-dark/too-blurry",
-  "gradingConfidence": 0-100
-}
-
-Be specific about what you SEE, not what you assume. If image quality prevents accurate grading, say so.`;
-
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({
-        model:"claude-sonnet-4-20250514", max_tokens:1400,
-        messages:[{ role:"user", content:[
-          { type:"image", source:{ type:"base64", media_type:"image/jpeg", data:base64 } },
-          { type:"text", text:prompt },
-        ]}],
-      }),
-    });
-    const data = await res.json();
-    const text = data.content?.map(c=>c.text||"").join("") || "";
-    return { success:true, data: JSON.parse(text.replace(/```json|```/g,"").trim()) };
+    const text = data.content?.map(c => c.text || "").join("") || "";
+    return { success:true, data: JSON.parse(text.replace(/```json|```/g, "").trim()) };
   } catch(e) {
     return { success:false, error:e.message };
   }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   REAL CARD LOOKUP — Calls /api/cardlookup → Mercari + TCG databases
-═══════════════════════════════════════════════════════════════════════════ */
-async function lookupCardFromAPIs(cardId, tcgType, language, fallbackName) {
-  const seed = CARD_DB[cardId];
-  try {
-    const res = await fetch(
-      `/api/cardlookup?id=${encodeURIComponent(cardId)}&tcg=${tcgType}&lang=${language}`,
-      { signal: AbortSignal.timeout(12000) }
-    );
-    if (!res.ok) throw new Error(res.status);
-    const data = await res.json();
-
-    // Even if DB didn't find, Mercari might have listings — still useful
-    const hasMercari = data.mercari?.listings?.length > 0;
-    const dbFound = data.found && data.name && data.name !== "Unknown";
-
-    if (dbFound || hasMercari) {
-      return {
-        source:"api",
-        found:true,
-        cardId: data.cardId || cardId,
-        name:    dbFound ? data.name : (fallbackName || seed?.name || `Card ${cardId}`),
-        nameJP:  data.nameJP || seed?.nameJP || "",
-        set:     data.set || seed?.set || "",
-        setName: data.setName || seed?.setName || "",
-        rarity:  data.rarity || (seed?.rarities && Object.keys(seed.rarities)[0]) || "",
-        type:    data.type || seed?.type || "",
-        color:   data.color || seed?.color || "",
-        cost:    data.cost ?? seed?.cost ?? null,
-        power:   data.power || seed?.power || null,
-        ability: data.ability || seed?.ability || "",
-        image:   data.image || null,
-        atk:data.atk, def:data.def, level:data.level,
-        attribute:data.attribute, race:data.race, archetype:data.archetype,
-        dbSources: data.sources || [],
-        mercari: data.mercari || null,
-        prices: seed?.rarities || null,
-        yuyuteiSlug: seed?.slug || null,
-      };
-    }
-  } catch(e) {
-    console.warn("cardlookup failed:", e.message);
-  }
-
-  // Fallback to seed DB
-  if (seed) {
-    return {
-      source:"seed", found:true, cardId,
-      name: seed.name, nameJP: seed.nameJP || "",
-      set: seed.set, setName: seed.setName,
-      rarity: Object.keys(seed.rarities || {})[0] || "",
-      type: seed.type || "", color: seed.color || "",
-      cost: seed.cost ?? null, power: seed.power || null,
-      ability: seed.ability || "", image: null,
-      prices: seed.rarities, yuyuteiSlug: seed.slug || null,
-      dbSources: [{ name:"Local Seed DB", url:"#" }],
-      mercari: null,
-    };
-  }
-
-  // Last resort — use AI-extracted name if available
-  return {
-    source:"none",
-    found: !!fallbackName,
-    cardId,
-    name: fallbackName || `Card ${cardId}`,
-    dbSources: [],
-    mercari: null,
-  };
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   CAMERA CAPTURE — max quality, frame-matched
+   CAMERA CAPTURE — locked 4K, no zoom drift, frame-matched
 ═══════════════════════════════════════════════════════════════════════════ */
 function captureCard({ video, frameEl, watermark }) {
   const vw = video.videoWidth, vh = video.videoHeight;
   const cw = video.clientWidth, ch = video.clientHeight;
   const vAr = vw/vh, bAr = cw/ch;
   let scale, ox, oy;
-  if(vAr > bAr){ scale=ch/vh; ox=(vw*scale-cw)/2; oy=0; }
-  else { scale=cw/vw; ox=0; oy=(vh*scale-ch)/2; }
+  if (vAr > bAr) { scale = ch/vh; ox = (vw*scale - cw)/2; oy = 0; }
+  else           { scale = cw/vw; ox = 0; oy = (vh*scale - ch)/2; }
 
   const fr = frameEl.getBoundingClientRect();
   const vr = video.getBoundingClientRect();
-  const disp = { left:fr.left-vr.left, top:fr.top-vr.top, width:fr.width, height:fr.height };
-
-  const fx = Math.max(0, Math.round((disp.left   + ox) / scale));
-  const fy = Math.max(0, Math.round((disp.top    + oy) / scale));
-  const fw = Math.min(vw-fx, Math.round(disp.width  / scale));
-  const fh = Math.min(vh-fy, Math.round(disp.height / scale));
+  const disp = { left: fr.left - vr.left, top: fr.top - vr.top, width: fr.width, height: fr.height };
+  const fx = Math.max(0, Math.round((disp.left + ox) / scale));
+  const fy = Math.max(0, Math.round((disp.top  + oy) / scale));
+  const fw = Math.min(vw - fx, Math.round(disp.width  / scale));
+  const fh = Math.min(vh - fy, Math.round(disp.height / scale));
 
   const card = document.createElement("canvas");
   card.width = fw; card.height = fh;
   const ctx = card.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(video, fx, fy, fw, fh, 0, 0, fw, fh);
 
-  // Watermark — bottom right, low opacity pill
-  const fs = Math.max(11, Math.round(fw * 0.026));
-  ctx.font = `500 ${fs}px 'DM Sans', sans-serif`;
+  // Watermark
+  const fs = Math.max(12, Math.round(fw * 0.026));
+  ctx.font = `500 ${fs}px 'Inter', sans-serif`;
   const tw = ctx.measureText(watermark).width;
   const pad = Math.round(fw * 0.018);
   ctx.save();
-  ctx.globalAlpha = 0.36;
-  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.globalAlpha = 0.36; ctx.fillStyle = "rgba(0,0,0,0.55)";
   ctx.beginPath(); ctx.roundRect(fw-tw-pad*3, fh-fs-pad*1.8, tw+pad*2.4, fs+pad*1.2, 6); ctx.fill();
-  ctx.globalAlpha = 0.72;
-  ctx.fillStyle = "#fff";
+  ctx.globalAlpha = 0.8; ctx.fillStyle = "#fff";
   ctx.fillText(watermark, fw-tw-pad*1.8, fh-pad*0.8);
   ctx.restore();
 
-  // 4-corner grid
-  const cpct = 0.28, ccw = Math.round(fw*cpct), cch = Math.round(fh*cpct);
-  const corners = [{label:"TL",sx:0,sy:0},{label:"TR",sx:fw-ccw,sy:0},{label:"BL",sx:0,sy:fh-cch},{label:"BR",sx:fw-ccw,sy:fh-cch}];
-  const gap = 5;
+  // 4-corner grid at maximum quality
+  const cpct = 0.30, ccw = Math.round(fw*cpct), cch = Math.round(fh*cpct);
+  const corners = [
+    {label:"TL",sx:0,sy:0},
+    {label:"TR",sx:fw-ccw,sy:0},
+    {label:"BL",sx:0,sy:fh-cch},
+    {label:"BR",sx:fw-ccw,sy:fh-cch},
+  ];
+  const gap = 6;
   const grid = document.createElement("canvas");
-  grid.width = ccw*2+gap*3; grid.height = cch*2+gap*3;
+  grid.width = ccw*2 + gap*3; grid.height = cch*2 + gap*3;
   const gc = grid.getContext("2d");
+  gc.imageSmoothingEnabled = true; gc.imageSmoothingQuality = "high";
   gc.fillStyle = "#1C1B26"; gc.fillRect(0,0,grid.width,grid.height);
-  corners.forEach((c,i)=>{
-    const col=i%2, row=Math.floor(i/2), dx=gap+col*(ccw+gap), dy=gap+row*(cch+gap);
+  corners.forEach((c,i) => {
+    const col = i%2, row = Math.floor(i/2);
+    const dx = gap + col*(ccw+gap), dy = gap + row*(cch+gap);
     gc.drawImage(card, c.sx, c.sy, ccw, cch, dx, dy, ccw, cch);
-    const ls = Math.round(cch*0.10);
+    const ls = Math.round(cch*0.09);
     gc.fillStyle = "rgba(240,158,122,0.9)";
-    gc.beginPath(); gc.roundRect(dx+5,dy+5,ls*2.4,ls*1.5,4); gc.fill();
-    gc.fillStyle = "#fff"; gc.font = `700 ${ls}px monospace`;
-    gc.fillText(c.label, dx+9, dy+ls*1.2);
+    gc.beginPath(); gc.roundRect(dx+6, dy+6, ls*2.5, ls*1.5, 4); gc.fill();
+    gc.fillStyle = "#fff"; gc.font = `700 ${ls}px 'JetBrains Mono', monospace`;
+    gc.fillText(c.label, dx+10, dy+ls*1.3);
   });
 
-  return { full: card.toDataURL("image/jpeg", 0.97), corners: grid.toDataURL("image/jpeg", 0.92) };
+  return {
+    full:    card.toDataURL("image/jpeg", 0.98),
+    corners: grid.toDataURL("image/jpeg", 0.95),
+    // Also export each corner individually for zoom viewer
+    cornersSeparate: corners.map(c => {
+      const cv = document.createElement("canvas");
+      cv.width = ccw; cv.height = cch;
+      cv.getContext("2d").drawImage(card, c.sx, c.sy, ccw, cch, 0, 0, ccw, cch);
+      return { label: c.label, src: cv.toDataURL("image/jpeg", 0.95) };
+    }),
+  };
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   IMAGE VIEWER — pinch/zoom, pan, close
+═══════════════════════════════════════════════════════════════════════════ */
+function ImageViewer({ image, label, onClose }) {
+  const [scale, setScale]     = useState(1);
+  const [pos, setPos]         = useState({ x:0, y:0 });
+  const [dragging, setDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x:0, y:0 });
+  const [pinchDist, setPinchDist] = useState(null);
+
+  const onWheel = (e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.15 : 0.15;
+    setScale(s => Math.max(1, Math.min(5, s + delta)));
+  };
+
+  const onTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      setPinchDist(Math.hypot(dx, dy));
+    } else if (e.touches.length === 1 && scale > 1) {
+      setDragging(true);
+      setDragStart({ x: e.touches[0].clientX - pos.x, y: e.touches[0].clientY - pos.y });
+    }
+  };
+
+  const onTouchMove = (e) => {
+    e.preventDefault();
+    if (e.touches.length === 2 && pinchDist !== null) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const newDist = Math.hypot(dx, dy);
+      const ratio = newDist / pinchDist;
+      setScale(s => Math.max(1, Math.min(5, s * ratio)));
+      setPinchDist(newDist);
+    } else if (dragging && scale > 1 && e.touches[0]) {
+      setPos({ x: e.touches[0].clientX - dragStart.x, y: e.touches[0].clientY - dragStart.y });
+    }
+  };
+
+  const onTouchEnd = () => { setDragging(false); setPinchDist(null); };
+
+  const reset = () => { setScale(1); setPos({x:0,y:0}); };
+  const zoomIn  = () => setScale(s => Math.min(5, s + 0.5));
+  const zoomOut = () => setScale(s => { const n = Math.max(1, s - 0.5); if (n === 1) setPos({x:0,y:0}); return n; });
+
+  return (
+    <div style={{
+      position:"fixed", inset:0, background:"rgba(0,0,0,0.94)", zIndex:9999,
+      display:"flex", flexDirection:"column",
+    }}
+      onWheel={onWheel}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
+      {/* Top bar */}
+      <div style={{
+        padding:"44px 20px 12px", display:"flex", justifyContent:"space-between", alignItems:"center",
+        background:"linear-gradient(to bottom, rgba(0,0,0,.7), transparent)",
+      }}>
+        <button onClick={onClose} style={{
+          background:"rgba(255,255,255,0.14)", border:"1px solid rgba(255,255,255,0.22)",
+          borderRadius:11, padding:"8px 14px", fontSize:13, fontWeight:600, color:"#fff",
+        }}>✕ Close</button>
+        {label && <div style={{ color:"#fff", fontSize:14, fontWeight:600 }}>{label}</div>}
+        <div className="mono" style={{ color:"rgba(255,255,255,0.65)", fontSize:12 }}>{scale.toFixed(1)}×</div>
+      </div>
+
+      {/* Image */}
+      <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden" }}>
+        <img
+          src={image}
+          alt={label || "zoom"}
+          onDoubleClick={reset}
+          style={{
+            maxWidth:"100%", maxHeight:"100%",
+            transform:`translate(${pos.x}px, ${pos.y}px) scale(${scale})`,
+            transition: dragging || pinchDist !== null ? "none" : "transform .2s",
+            cursor: scale > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in",
+            userSelect:"none",
+          }}
+          onClick={() => scale === 1 && zoomIn()}
+          draggable={false}
+        />
+      </div>
+
+      {/* Zoom controls */}
+      <div style={{
+        padding:"12px 20px 30px", display:"flex", gap:10, justifyContent:"center",
+        background:"linear-gradient(to top, rgba(0,0,0,.6), transparent)",
+      }}>
+        <button onClick={zoomOut} style={ctrlBtn}>−</button>
+        <button onClick={reset}   style={{...ctrlBtn, minWidth:80}}>Reset</button>
+        <button onClick={zoomIn}  style={ctrlBtn}>+</button>
+      </div>
+    </div>
+  );
+}
+const ctrlBtn = {
+  background:"rgba(255,255,255,0.14)", border:"1px solid rgba(255,255,255,0.22)",
+  borderRadius:12, padding:"10px 16px", fontSize:18, fontWeight:700, color:"#fff",
+  minWidth:52, cursor:"pointer",
+};
 
 /* ═══════════════════════════════════════════════════════════════════════════
    UI ATOMS
 ═══════════════════════════════════════════════════════════════════════════ */
 function Pill({ ch, color, s }) {
   color = color || C.peachDk;
-  return <span style={{ background:hex2rgb(color,0.14), color, border:`1px solid ${hex2rgb(color,0.35)}`, borderRadius:99, padding:"3px 10px", fontSize:11, fontWeight:600, display:"inline-block", whiteSpace:"nowrap", ...s }}>{ch}</span>;
+  return <span style={{ background:rgba(color,0.14), color, border:`1px solid ${rgba(color,0.35)}`, borderRadius:99, padding:"3px 10px", fontSize:11, fontWeight:600, display:"inline-block", whiteSpace:"nowrap", ...s }}>{ch}</span>;
 }
-
 function PBtn({ children, onClick, disabled, s }) {
-  return <button onClick={onClick} disabled={disabled} style={{ background:disabled?C.dim:C.peachDk, color:"#fff", border:"none", borderRadius:14, padding:"13px 20px", fontSize:15, fontWeight:700, width:"100%", cursor:disabled?"not-allowed":"pointer", boxShadow:disabled?"none":`0 6px 20px ${hex2rgb(C.peachDk,0.32)}`, display:"flex", alignItems:"center", justifyContent:"center", gap:8, ...s }}>{children}</button>;
+  return <button onClick={onClick} disabled={disabled} style={{ background:disabled?C.dim:C.peachDk, color:"#fff", border:"none", borderRadius:14, padding:"13px 20px", fontSize:15, fontWeight:700, width:"100%", cursor:disabled?"not-allowed":"pointer", boxShadow:disabled?"none":`0 6px 20px ${rgba(C.peachDk,0.32)}`, display:"flex", alignItems:"center", justifyContent:"center", gap:8, ...s }}>{children}</button>;
 }
-
 function SBtn({ children, onClick, s }) {
   return <button onClick={onClick} style={{ background:"transparent", color:C.ink, border:`1px solid ${C.bord}`, borderRadius:10, padding:"8px 14px", fontSize:13, fontWeight:600, cursor:"pointer", ...s }}>{children}</button>;
 }
-
 function Card({ children, s, accent }) {
-  return <div style={{ background:C.surf, border:`1px solid ${C.bord}`, borderRadius:16, overflow:"hidden", boxShadow: accent ? `0 4px 18px ${hex2rgb(accent,0.12)}` : "0 2px 10px rgba(28,27,38,0.04)", ...s }}>{children}</div>;
+  return <div style={{ background:C.surf, border:`1px solid ${C.bord}`, borderRadius:16, overflow:"hidden", boxShadow: accent ? `0 4px 18px ${rgba(accent,0.12)}` : "0 2px 10px rgba(28,27,38,0.04)", ...s }}>{children}</div>;
 }
-
 function Hdr({ children, accent }) {
-  return <div style={{ padding:"10px 16px", borderBottom:`1px solid ${C.line}`, background:accent?hex2rgb(accent,0.06):hex2rgb(C.deep,0.5), fontSize:10.5, fontWeight:700, color:accent||C.sub, letterSpacing:"0.08em", textTransform:"uppercase" }}>{children}</div>;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   INTERACTIVE PRICE CHART
-═══════════════════════════════════════════════════════════════════════════ */
-function PriceChart({ chart, color, timeframe, onTF }) {
-  const svgRef = useRef(null);
-  const [hov, setHov] = useState(null);
-  const TFs = ["1M","3M","6M","1Y","3Y"];
-  const months = {"1M":1,"3M":3,"6M":6,"1Y":12,"3Y":36}[timeframe]||12;
-  const data = chart.slice(-months);
-  const max = Math.max(...data.map(p=>p.max),1);
-  const min = Math.min(...data.map(p=>p.min),max);
-  const rng = max-min||1; const pad = rng*0.12;
-  const yMax = max+pad, yMin = Math.max(0,min-pad);
-  const pts = data.map((p,i)=>({ x:data.length>1?(i/(data.length-1))*96+2:50, y:100-((p.avg-yMin)/(yMax-yMin||1))*88-2, d:p }));
-  const linePath = "M"+pts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join("L");
-  const areaPath = linePath+` L${pts[pts.length-1]?.x||0},102 L${pts[0]?.x||0},102 Z`;
-  const gid = `g${color.replace(/[^a-z0-9]/gi,"_")}`;
-
-  const onMove = e => {
-    const svg = svgRef.current; if(!svg||!pts.length) return;
-    const rect = svg.getBoundingClientRect();
-    const cx = ((e.touches?e.touches[0].clientX:e.clientX)-rect.left)/rect.width*100;
-    let ni=0, nd=Infinity;
-    pts.forEach((p,i)=>{ const d=Math.abs(p.x-cx); if(d<nd){nd=d;ni=i;} });
-    setHov(ni);
-  };
-
-  const hp = hov!==null?pts[hov]:null;
-
-  return (
-    <div>
-      <div style={{ display:"flex", gap:4, padding:"0 14px 10px" }}>
-        {TFs.map(tf=>(
-          <button key={tf} onClick={()=>onTF(tf)} style={{ flex:1, background:timeframe===tf?color:"transparent", color:timeframe===tf?"#fff":C.sub, border:`1px solid ${timeframe===tf?color:C.bord}`, borderRadius:8, padding:"6px 2px", fontSize:11, fontWeight:600, cursor:"pointer" }}>{tf}</button>
-        ))}
-      </div>
-      <div style={{ position:"relative", padding:"32px 14px 0" }}>
-        {hp && (
-          <div style={{ position:"absolute", top:0, left:`clamp(10px, ${hp.x}%, calc(100% - 120px))`, background:C.ink, color:"#fff", padding:"6px 10px", borderRadius:9, fontSize:11, whiteSpace:"nowrap", pointerEvents:"none", zIndex:10 }}>
-            <div style={{ fontWeight:700 }}>{fmtTHB(hp.d.avg)}</div>
-            <div style={{ opacity:.7, fontSize:10 }}>{hp.d.month} · {hp.d.n} sales</div>
-          </div>
-        )}
-        <svg ref={svgRef} viewBox="0 0 100 102" style={{ width:"100%", height:150, cursor:"crosshair", touchAction:"none" }} preserveAspectRatio="none"
-          onMouseMove={onMove} onTouchMove={onMove} onMouseLeave={()=>setHov(null)} onTouchEnd={()=>setTimeout(()=>setHov(null),1800)}>
-          <defs>
-            <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity=".22"/>
-              <stop offset="100%" stopColor={color} stopOpacity="0"/>
-            </linearGradient>
-          </defs>
-          <path d={areaPath} fill={`url(#${gid})`}/>
-          <path d={linePath} fill="none" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-          {pts.map((p,i)=><circle key={i} cx={p.x} cy={p.y} r={hov===i?2.8:1.6} fill={color}/>)}
-          {hp && <line x1={hp.x} y1="0" x2={hp.x} y2="102" stroke={color} strokeWidth=".4" strokeDasharray="2,2" opacity=".5"/>}
-        </svg>
-      </div>
-      <div style={{ display:"flex", justifyContent:"space-between", padding:"4px 14px 0", fontSize:9, color:C.dim }}>
-        {data.length>0&&<><span>{data[0]?.month}</span><span>{data[Math.floor(data.length/2)]?.month}</span><span>{data[data.length-1]?.month}</span></>}
-      </div>
-    </div>
-  );
+  return <div style={{ padding:"10px 16px", borderBottom:`1px solid ${C.line}`, background:accent?rgba(accent,0.06):rgba(C.deep,0.5), fontSize:10.5, fontWeight:700, color:accent||C.sub, letterSpacing:"0.08em", textTransform:"uppercase" }}>{children}</div>;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -622,12 +698,12 @@ function LoginScreen({ onLogin }) {
     { id:"instagram", label:"Continue with Instagram", icon:"◉", bg:"linear-gradient(135deg,#F58529,#DD2A7B,#8134AF)", text:"#fff" },
   ];
 
-  const goSocial = id => {
-    const n={facebook:"FB_"+Math.random().toString(36).slice(2,6),google:"G_"+Math.random().toString(36).slice(2,6),instagram:"IG_"+Math.random().toString(36).slice(2,6)};
+  const goSocial = (id) => {
+    const n = { facebook:"FB_"+Math.random().toString(36).slice(2,6), google:"G_"+Math.random().toString(36).slice(2,6), instagram:"IG_"+Math.random().toString(36).slice(2,6) };
     onLogin({ name:n[id], provider:id, verified:true });
   };
   const goGuest = () => {
-    if(!name.trim()||name.trim().length<2) return setErr("Enter at least 2 characters");
+    if (!name.trim() || name.trim().length < 2) return setErr("Enter at least 2 characters");
     onLogin({ name:name.trim(), provider:"guest", verified:false });
   };
 
@@ -635,33 +711,35 @@ function LoginScreen({ onLogin }) {
     <div style={{ minHeight:"100vh", background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 22px", position:"relative", overflow:"hidden" }}>
       <style>{CSS}</style>
       <div style={{ position:"fixed", inset:0, pointerEvents:"none" }}>
-        <div style={{ position:"absolute", top:"-15%", left:"-15%", width:"55%", height:"50%", background:hex2rgb(C.peach,.18), borderRadius:"50%", filter:"blur(70px)" }}/>
-        <div style={{ position:"absolute", bottom:"-20%", right:"-20%", width:"65%", height:"55%", background:hex2rgb(C.lav,.2), borderRadius:"50%", filter:"blur(80px)" }}/>
+        <div style={{ position:"absolute", top:"-15%", left:"-15%", width:"55%", height:"50%", background:rgba(C.peach,.18), borderRadius:"50%", filter:"blur(70px)" }}/>
+        <div style={{ position:"absolute", bottom:"-20%", right:"-20%", width:"65%", height:"55%", background:rgba(C.lav,.2), borderRadius:"50%", filter:"blur(80px)" }}/>
       </div>
 
       <div style={{ width:"100%", maxWidth:370, position:"relative", zIndex:1 }}>
         <div className="r1" style={{ textAlign:"center", marginBottom:28 }}>
-          <div style={{ width:70, height:70, borderRadius:21, background:`linear-gradient(135deg,${C.peach},${C.coral})`, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px", boxShadow:`0 12px 32px ${hex2rgb(C.coral,.35)}` }}>
+          <div style={{ width:70, height:70, borderRadius:21, background:`linear-gradient(135deg,${C.peach},${C.coral})`, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px", boxShadow:`0 12px 32px ${rgba(C.coral,.35)}` }}>
             <span style={{ fontSize:32, color:"#fff" }}>◆</span>
           </div>
-          <div style={{ fontSize:32, fontWeight:800, marginBottom:4 }}>BoBoa <span style={{ color:C.peachDk }}>Scanner</span></div>
-          <div style={{ fontSize:13.5, color:C.sub }}>Scan · Identify · Grade · Price</div>
+          <div className="display" style={{ fontSize:32, fontWeight:800, marginBottom:4 }}>BoBoa <span style={{ color:C.peachDk }}>Scanner</span></div>
+          <div style={{ fontSize:13.5, color:C.sub }}>Scan · Identify · Price across platforms</div>
         </div>
 
         {!guest ? (
           <>
             <div className="r2" style={{ display:"flex", flexDirection:"column", gap:10 }}>
-              {socials.map(s=>(
-                <button key={s.id} onClick={()=>goSocial(s.id)} style={{ display:"flex", alignItems:"center", gap:12, background:s.bg, color:s.text, border:s.bord?`1px solid ${C.bord}`:"none", borderRadius:13, padding:"12px 18px", fontSize:14.5, fontWeight:600, cursor:"pointer", boxShadow:"0 4px 14px rgba(28,27,38,0.06)" }}>
+              {socials.map(s => (
+                <button key={s.id} onClick={() => goSocial(s.id)} style={{ display:"flex", alignItems:"center", gap:12, background:s.bg, color:s.text, border:s.bord?`1px solid ${C.bord}`:"none", borderRadius:13, padding:"12px 18px", fontSize:14.5, fontWeight:600, cursor:"pointer", boxShadow:"0 4px 14px rgba(28,27,38,0.06)" }}>
                   <div style={{ width:26, height:26, borderRadius:7, background:s.bord?"#4285F4":"rgba(255,255,255,.22)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:800 }}>{s.icon}</div>
                   <span style={{ flex:1, textAlign:"left" }}>{s.label}</span>
                 </button>
               ))}
             </div>
             <div className="r3" style={{ display:"flex", alignItems:"center", gap:12, margin:"20px 0" }}>
-              <div style={{ flex:1, height:1, background:C.bord }}/><span style={{ fontSize:11, color:C.dim, letterSpacing:"0.08em" }}>OR</span><div style={{ flex:1, height:1, background:C.bord }}/>
+              <div style={{ flex:1, height:1, background:C.bord }}/>
+              <span style={{ fontSize:11, color:C.dim, letterSpacing:"0.08em" }}>OR</span>
+              <div style={{ flex:1, height:1, background:C.bord }}/>
             </div>
-            <button className="r3" onClick={()=>setGuest(true)} style={{ width:"100%", background:"transparent", border:`1.5px dashed ${C.bord}`, borderRadius:13, padding:"13px", fontSize:14, fontWeight:600, color:C.ink, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            <button className="r3" onClick={() => setGuest(true)} style={{ width:"100%", background:"transparent", border:`1.5px dashed ${C.bord}`, borderRadius:13, padding:"13px", fontSize:14, fontWeight:600, color:C.ink, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
               <span style={{ fontSize:16 }}>👤</span> Continue as Guest
             </button>
           </>
@@ -671,14 +749,13 @@ function LoginScreen({ onLogin }) {
               <div style={{ padding:20 }}>
                 <div style={{ fontSize:13, fontWeight:700, marginBottom:3 }}>Your watermark name</div>
                 <div style={{ fontSize:12, color:C.sub, marginBottom:14, lineHeight:1.6 }}>Stamped on every scan at low opacity.</div>
-                <input autoFocus type="text" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. BoBoBoa" maxLength={20}
+                <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. BoBoBoa" maxLength={20}
                   style={{ width:"100%", background:C.bg, border:`1.5px solid ${C.bord}`, borderRadius:11, padding:"12px 14px", fontSize:15, color:C.ink, outline:"none", marginBottom:10 }}
-                  onKeyDown={e=>e.key==="Enter"&&goGuest()}
-                  onFocus={e=>e.target.style.borderColor=C.peachDk} onBlur={e=>e.target.style.borderColor=C.bord}/>
-                {name&&<div style={{ background:C.deep, borderRadius:9, padding:"8px 12px", marginBottom:10, fontSize:11.5, color:C.sub }}>Preview: <strong style={{ color:C.ink }}>{name} · {new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace(/ /g,"-")}</strong></div>}
-                {err&&<div style={{ background:hex2rgb(C.coral,.14), border:`1px solid ${hex2rgb(C.coral,.35)}`, borderRadius:9, padding:"8px 12px", fontSize:12, color:C.coral, marginBottom:10 }}>{err}</div>}
+                  onKeyDown={e => e.key === "Enter" && goGuest()}/>
+                {name && <div style={{ background:C.deep, borderRadius:9, padding:"8px 12px", marginBottom:10, fontSize:11.5, color:C.sub }}>Preview: <strong style={{ color:C.ink }}>{name} · {new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace(/ /g,"-")}</strong></div>}
+                {err && <div style={{ background:rgba(C.coral,.14), border:`1px solid ${rgba(C.coral,.35)}`, borderRadius:9, padding:"8px 12px", fontSize:12, color:C.coral, marginBottom:10 }}>{err}</div>}
                 <PBtn onClick={goGuest}>Continue →</PBtn>
-                <button onClick={()=>{setGuest(false);setErr("");setName("");}} style={{ width:"100%", background:"transparent", border:"none", marginTop:8, padding:"6px", fontSize:12, color:C.sub, cursor:"pointer" }}>← Back</button>
+                <button onClick={() => { setGuest(false); setErr(""); setName(""); }} style={{ width:"100%", background:"transparent", border:"none", marginTop:8, padding:"6px", fontSize:12, color:C.sub, cursor:"pointer" }}>← Back</button>
               </div>
             </Card>
           </div>
@@ -689,18 +766,18 @@ function LoginScreen({ onLogin }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SCREEN: WELCOME — TCG + Language pickers
+   SCREEN: WELCOME
 ═══════════════════════════════════════════════════════════════════════════ */
 function WelcomeScreen({ user, onStart, onLogout }) {
-  const [tcg, setTcg] = useState("onepiece");
+  const [tcg, setTcg]   = useState("onepiece");
   const [lang, setLang] = useState("JP");
 
   return (
     <div style={{ minHeight:"100vh", background:C.bg, padding:"54px 20px 40px", position:"relative" }}>
       <style>{CSS}</style>
       <div style={{ position:"fixed", inset:0, pointerEvents:"none", overflow:"hidden" }}>
-        <div style={{ position:"absolute", top:"5%", right:"-20%", width:"55%", height:"40%", background:hex2rgb(C.butter,.22), borderRadius:"50%", filter:"blur(80px)" }}/>
-        <div style={{ position:"absolute", bottom:0, left:"-15%", width:"45%", height:"35%", background:hex2rgb(C.sky,.2), borderRadius:"50%", filter:"blur(70px)" }}/>
+        <div style={{ position:"absolute", top:"5%", right:"-20%", width:"55%", height:"40%", background:rgba(C.butter,.22), borderRadius:"50%", filter:"blur(80px)" }}/>
+        <div style={{ position:"absolute", bottom:0, left:"-15%", width:"45%", height:"35%", background:rgba(C.sky,.2), borderRadius:"50%", filter:"blur(70px)" }}/>
       </div>
 
       <div style={{ position:"relative", zIndex:1, maxWidth:430, margin:"0 auto" }}>
@@ -709,38 +786,38 @@ function WelcomeScreen({ user, onStart, onLogout }) {
             <div style={{ width:34, height:34, borderRadius:"50%", background:`linear-gradient(135deg,${C.peach},${C.rose})`, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:13, fontWeight:700 }}>{user.name[0].toUpperCase()}</div>
             <div>
               <div style={{ fontSize:12.5, fontWeight:600 }}>{user.name}</div>
-              <div style={{ fontSize:10, color:C.dim, textTransform:"capitalize" }}>{user.verified?`✓ ${user.provider}`:"Guest"}</div>
+              <div style={{ fontSize:10, color:C.dim, textTransform:"capitalize" }}>{user.verified ? `✓ ${user.provider}` : "Guest"}</div>
             </div>
           </div>
           <SBtn onClick={onLogout}>Sign out</SBtn>
         </div>
 
         <div className="r2" style={{ marginBottom:26 }}>
-          <div style={{ fontSize:34, fontWeight:800, lineHeight:1.05, marginBottom:8 }}>
+          <div className="display" style={{ fontSize:34, fontWeight:800, lineHeight:1.05, marginBottom:8 }}>
             Scan a card<br/><span style={{ color:C.peachDk }}>instantly.</span>
           </div>
-          <div style={{ fontSize:13.5, color:C.sub, lineHeight:1.6 }}>BoBoa AI identifies the card, grades the condition, and pulls prices from 7 sources in THB · USD · JPY.</div>
+          <div style={{ fontSize:13.5, color:C.sub, lineHeight:1.6 }}>
+            Real prices from Mercari, Yahoo Auctions, Yuyu-tei, eBay and more — opened live in your browser.
+          </div>
         </div>
 
         <div className="r3" style={{ marginBottom:22 }}>
           <div style={{ fontSize:11, fontWeight:700, color:C.sub, marginBottom:10, letterSpacing:"0.1em", textTransform:"uppercase" }}>Step 1 · Choose TCG</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-            {TCG_TYPES.map(t=>{
-              const sel=tcg===t.id;
+            {TCG_TYPES.map(t => {
+              const sel = tcg === t.id;
               const logoColor = sel ? "#fff" : t.color;
               return (
-                <button key={t.id} onClick={()=>setTcg(t.id)} style={{
-                  background:sel?t.color:C.surf,
-                  color:sel?"#fff":C.ink,
-                  border:`2px solid ${sel?t.color:C.bord}`,
-                  borderRadius:18, padding:"18px 12px 14px",
-                  cursor:"pointer", textAlign:"center",
-                  boxShadow:sel?`0 8px 22px ${hex2rgb(t.color,.32)}`:"0 2px 8px rgba(28,27,38,0.04)",
-                  transition:"all .18s",
-                  display:"flex", flexDirection:"column", alignItems:"center", gap:8,
+                <button key={t.id} onClick={() => setTcg(t.id)} style={{
+                  background: sel ? t.color : C.surf,
+                  color: sel ? "#fff" : C.ink,
+                  border: `2px solid ${sel ? t.color : C.bord}`,
+                  borderRadius:18, padding:"18px 12px 14px", cursor:"pointer", textAlign:"center",
+                  boxShadow: sel ? `0 8px 22px ${rgba(t.color,.32)}` : "0 2px 8px rgba(28,27,38,0.04)",
+                  transition:"all .18s", display:"flex", flexDirection:"column", alignItems:"center", gap:8,
                 }}>
                   <div style={{ width:76, height:76 }} dangerouslySetInnerHTML={{__html: t.logo(logoColor)}}/>
-                  <div className="display" style={{ fontSize:16, fontWeight:800, letterSpacing:"-0.02em" }}>{t.name}</div>
+                  <div className="display" style={{ fontSize:16, fontWeight:800 }}>{t.name}</div>
                   <div style={{ fontSize:10.5, fontWeight:500, opacity:sel?0.9:0.55, letterSpacing:"0.04em", textTransform:"uppercase" }}>{t.shortName}</div>
                 </button>
               );
@@ -751,17 +828,15 @@ function WelcomeScreen({ user, onStart, onLogout }) {
         <div className="r3" style={{ marginBottom:26 }}>
           <div style={{ fontSize:11, fontWeight:700, color:C.sub, marginBottom:10, letterSpacing:"0.1em", textTransform:"uppercase" }}>Step 2 · Card language</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-            {LANGUAGES.map(l=>{
-              const sel=lang===l.id;
+            {LANGUAGES.map(l => {
+              const sel = lang === l.id;
               return (
-                <button key={l.id} onClick={()=>setLang(l.id)} style={{
-                  background:sel?C.ink:C.surf,
-                  color:sel?"#fff":C.ink,
-                  border:`2px solid ${sel?C.ink:C.bord}`,
-                  borderRadius:14, padding:"14px 10px",
-                  cursor:"pointer", textAlign:"center",
-                  boxShadow:sel?`0 6px 18px rgba(28,27,38,0.2)`:"0 2px 8px rgba(28,27,38,0.04)",
-                  transition:"all .18s",
+                <button key={l.id} onClick={() => setLang(l.id)} style={{
+                  background: sel ? C.ink : C.surf,
+                  color: sel ? "#fff" : C.ink,
+                  border: `2px solid ${sel ? C.ink : C.bord}`,
+                  borderRadius:14, padding:"14px 10px", cursor:"pointer", textAlign:"center",
+                  boxShadow: sel ? "0 6px 18px rgba(28,27,38,0.2)" : "0 2px 8px rgba(28,27,38,0.04)",
                 }}>
                   <div style={{ fontSize:30, marginBottom:6 }}>{l.flag}</div>
                   <div className="display" style={{ fontSize:15, fontWeight:700, marginBottom:2 }}>{l.label}</div>
@@ -773,7 +848,7 @@ function WelcomeScreen({ user, onStart, onLogout }) {
         </div>
 
         <div className="r4">
-          <PBtn onClick={()=>onStart({tcg,lang})} s={{ padding:"16px 20px", fontSize:16 }}>
+          <PBtn onClick={() => onStart({ tcg, lang })} s={{ padding:"16px 20px", fontSize:16 }}>
             <span style={{ fontSize:19 }}>📷</span> Scan or Upload a Card
           </PBtn>
           <div style={{ textAlign:"center", marginTop:10, fontSize:11, color:C.dim }}>
@@ -786,54 +861,80 @@ function WelcomeScreen({ user, onStart, onLogout }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SCREEN: CAPTURE — Camera OR Upload
+   SCREEN: CAPTURE — locked 4K camera, no zoom drift
 ═══════════════════════════════════════════════════════════════════════════ */
 function CaptureScreen({ user, ctx, onCapture, onBack }) {
   const videoRef  = useRef(null);
   const frameRef  = useRef(null);
   const streamRef = useRef(null);
+  const trackRef  = useRef(null);
   const fileRef   = useRef(null);
-  const [mode,   setMode]   = useState("camera"); // "camera" | "upload"
-  const [status, setStatus] = useState("starting");
-  const [errMsg, setErrMsg] = useState("");
-  const [flash,  setFlash]  = useState(false);
+  const [mode,    setMode]    = useState("camera");
+  const [status,  setStatus]  = useState("starting");
+  const [errMsg,  setErrMsg]  = useState("");
+  const [flash,   setFlash]   = useState(false);
 
   const stopCam = () => {
-    if(streamRef.current){ streamRef.current.getTracks().forEach(t=>t.stop()); streamRef.current=null; }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      trackRef.current = null;
+    }
   };
 
   const startCam = useCallback(async () => {
     setStatus("starting"); setErrMsg("");
     try {
+      // Request back camera with max resolution
       const stream = await navigator.mediaDevices.getUserMedia({
-        video:{
-          facingMode:"environment",
-          width:{ ideal:4096, min:1920 },      // 4K preferred, 1080p minimum
-          height:{ ideal:3072, min:1080 },
-          frameRate:{ ideal:30 },
-          focusMode:"continuous",               // continuous autofocus
-          zoom:1,                               // force 1x zoom (no digital zoom)
-          whiteBalanceMode:"continuous",
-          exposureMode:"continuous",
+        video: {
+          facingMode: { ideal: "environment" },
+          width:  { ideal: 4096, min: 1920 },
+          height: { ideal: 3072, min: 1080 },
+          frameRate: { ideal: 30 },
         },
-        audio:false,
+        audio: false,
       });
+
       streamRef.current = stream;
+      const track = stream.getVideoTracks()[0];
+      trackRef.current = track;
+
+      // LOCK the lens/zoom after stream starts to prevent lens swap drift
+      try {
+        const caps = track.getCapabilities?.() || {};
+        const constraints = { advanced: [] };
+        // Try to lock to 1x zoom (base lens)
+        if (caps.zoom) constraints.advanced.push({ zoom: caps.zoom.min || 1 });
+        // Continuous autofocus — still refocuses on content but doesn't swap lens
+        if (caps.focusMode?.includes("continuous")) constraints.advanced.push({ focusMode: "continuous" });
+        // Continuous auto white balance
+        if (caps.whiteBalanceMode?.includes("continuous")) constraints.advanced.push({ whiteBalanceMode: "continuous" });
+        // Continuous auto exposure
+        if (caps.exposureMode?.includes("continuous")) constraints.advanced.push({ exposureMode: "continuous" });
+        // Apply after a beat so stream is stable
+        setTimeout(() => track.applyConstraints(constraints).catch(() => {}), 400);
+      } catch(e) { /* capabilities API not supported — fine */ }
+
       const v = videoRef.current;
-      if(v){
+      if (v) {
         v.srcObject = stream;
         v.setAttribute("playsinline","true");
         v.muted = true;
-        v.onloadedmetadata = () => v.play().then(()=>setStatus("live")).catch(e=>{setErrMsg("Video: "+e.message);setStatus("error");});
+        v.onloadedmetadata = () => v.play()
+          .then(() => setStatus("live"))
+          .catch(e => { setErrMsg("Video: " + e.message); setStatus("error"); });
       }
     } catch(e) {
-      setErrMsg(e.name==="NotAllowedError"?"Camera denied.\n\niPhone: Settings → Safari → Camera → Allow":"Camera: "+e.message);
+      setErrMsg(e.name === "NotAllowedError"
+        ? "Camera denied.\n\niPhone: Settings → Safari → Camera → Allow"
+        : "Camera: " + e.message);
       setStatus("error");
     }
   }, []);
 
   useEffect(() => {
-    if(mode==="camera") startCam();
+    if (mode === "camera") startCam();
     return stopCam;
   }, [mode, startCam]);
 
@@ -841,174 +942,160 @@ function CaptureScreen({ user, ctx, onCapture, onBack }) {
   const watermark = `${user.name} · ${dateStr}`;
 
   const capture = () => {
-    const v=videoRef.current, f=frameRef.current;
-    if(!v||!f||status!=="live") return;
-    setFlash(true); setTimeout(()=>setFlash(false),150);
-    const result = captureCard({video:v, frameEl:f, watermark});
+    const v = videoRef.current, f = frameRef.current;
+    if (!v || !f || status !== "live") return;
+    setFlash(true); setTimeout(() => setFlash(false), 150);
+    const result = captureCard({ video: v, frameEl: f, watermark });
     stopCam();
     onCapture(result);
   };
 
-  const handleUpload = e => {
+  const handleUpload = (e) => {
     const file = e.target.files?.[0];
-    if(!file) return;
+    if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => {
-      // Draw to canvas to apply watermark consistently
+    reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        // Preserve full resolution
-        canvas.width  = img.naturalWidth;
-        canvas.height = img.naturalHeight;
+        canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
         const ctx2 = canvas.getContext("2d");
+        ctx2.imageSmoothingEnabled = true; ctx2.imageSmoothingQuality = "high";
         ctx2.drawImage(img, 0, 0);
 
-        // Watermark
         const fw = canvas.width, fh = canvas.height;
-        const fs = Math.max(14, Math.round(fw * 0.022));
-        ctx2.font = `500 ${fs}px 'DM Sans', sans-serif`;
+        const fs = Math.max(16, Math.round(fw * 0.022));
+        ctx2.font = `500 ${fs}px Inter, sans-serif`;
         const tw = ctx2.measureText(watermark).width;
         const pad = Math.round(fw * 0.016);
         ctx2.save();
-        ctx2.globalAlpha = 0.36;
-        ctx2.fillStyle = "rgba(0,0,0,0.5)";
+        ctx2.globalAlpha = 0.36; ctx2.fillStyle = "rgba(0,0,0,0.55)";
         ctx2.beginPath(); ctx2.roundRect(fw-tw-pad*3, fh-fs-pad*1.8, tw+pad*2.4, fs+pad*1.2, 6); ctx2.fill();
-        ctx2.globalAlpha = 0.72;
-        ctx2.fillStyle = "#fff";
+        ctx2.globalAlpha = 0.8; ctx2.fillStyle = "#fff";
         ctx2.fillText(watermark, fw-tw-pad*1.8, fh-pad*0.8);
         ctx2.restore();
 
-        // 4-corner grid from full image
-        const cpct=0.28, ccw=Math.round(fw*cpct), cch=Math.round(fh*cpct);
-        const corners=[{label:"TL",sx:0,sy:0},{label:"TR",sx:fw-ccw,sy:0},{label:"BL",sx:0,sy:fh-cch},{label:"BR",sx:fw-ccw,sy:fh-cch}];
-        const gap=5;
-        const grid=document.createElement("canvas");
-        grid.width=ccw*2+gap*3; grid.height=cch*2+gap*3;
-        const gc=grid.getContext("2d");
-        gc.fillStyle="#1C1B26"; gc.fillRect(0,0,grid.width,grid.height);
-        corners.forEach((c,i)=>{
-          const col=i%2,row=Math.floor(i/2),dx=gap+col*(ccw+gap),dy=gap+row*(cch+gap);
-          gc.drawImage(canvas,c.sx,c.sy,ccw,cch,dx,dy,ccw,cch);
-          const ls=Math.round(cch*0.10);
-          gc.fillStyle="rgba(240,158,122,0.9)";
-          gc.beginPath();gc.roundRect(dx+5,dy+5,ls*2.4,ls*1.5,4);gc.fill();
-          gc.fillStyle="#fff";gc.font=`700 ${ls}px monospace`;
-          gc.fillText(c.label,dx+9,dy+ls*1.2);
+        const cpct = 0.30, ccw = Math.round(fw*cpct), cch = Math.round(fh*cpct);
+        const corners = [
+          {label:"TL",sx:0,sy:0}, {label:"TR",sx:fw-ccw,sy:0},
+          {label:"BL",sx:0,sy:fh-cch}, {label:"BR",sx:fw-ccw,sy:fh-cch},
+        ];
+        const gap = 6;
+        const grid = document.createElement("canvas");
+        grid.width = ccw*2 + gap*3; grid.height = cch*2 + gap*3;
+        const gc = grid.getContext("2d");
+        gc.imageSmoothingEnabled = true; gc.imageSmoothingQuality = "high";
+        gc.fillStyle = "#1C1B26"; gc.fillRect(0,0,grid.width,grid.height);
+        corners.forEach((c,i) => {
+          const col = i%2, row = Math.floor(i/2);
+          const dx = gap + col*(ccw+gap), dy = gap + row*(cch+gap);
+          gc.drawImage(canvas, c.sx, c.sy, ccw, cch, dx, dy, ccw, cch);
+          const ls = Math.round(cch*0.09);
+          gc.fillStyle = "rgba(240,158,122,0.9)";
+          gc.beginPath(); gc.roundRect(dx+6, dy+6, ls*2.5, ls*1.5, 4); gc.fill();
+          gc.fillStyle = "#fff"; gc.font = `700 ${ls}px JetBrains Mono, monospace`;
+          gc.fillText(c.label, dx+10, dy+ls*1.3);
         });
 
-        onCapture({ full: canvas.toDataURL("image/jpeg", 0.97), corners: grid.toDataURL("image/jpeg",0.92) });
+        onCapture({
+          full:    canvas.toDataURL("image/jpeg", 0.98),
+          corners: grid.toDataURL("image/jpeg", 0.95),
+          cornersSeparate: corners.map(c => {
+            const cv = document.createElement("canvas");
+            cv.width = ccw; cv.height = cch;
+            cv.getContext("2d").drawImage(canvas, c.sx, c.sy, ccw, cch, 0, 0, ccw, cch);
+            return { label: c.label, src: cv.toDataURL("image/jpeg", 0.95) };
+          }),
+        });
       };
       img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
   };
 
-  const tcg = TCG_TYPES.find(t=>t.id===ctx.tcg);
-  const lang = LANGUAGES.find(l=>l.id===ctx.lang);
+  const tcg  = TCG_TYPES.find(t => t.id === ctx.tcg);
+  const lang = LANGUAGES.find(l => l.id === ctx.lang);
 
   return (
     <div style={{ position:"fixed", inset:0, background:"#000", display:"flex", flexDirection:"column" }}>
       <style>{CSS}</style>
 
-      {/* Mode toggle at top */}
+      {/* Top bar */}
       <div style={{ position:"absolute", top:0, left:0, right:0, zIndex:10, padding:"48px 18px 10px", background:"linear-gradient(to bottom,rgba(0,0,0,0.7),transparent)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-        <button onClick={()=>{stopCam();onBack();}} style={{ background:"rgba(255,255,255,.16)", border:"1px solid rgba(255,255,255,.22)", borderRadius:11, padding:"7px 13px", fontSize:13, fontWeight:600, color:"#fff", cursor:"pointer" }}>← Back</button>
+        <button onClick={() => { stopCam(); onBack(); }} style={{ background:"rgba(255,255,255,.16)", border:"1px solid rgba(255,255,255,.22)", borderRadius:11, padding:"7px 13px", fontSize:13, fontWeight:600, color:"#fff", cursor:"pointer" }}>← Back</button>
         <div style={{ display:"flex", background:"rgba(0,0,0,.4)", borderRadius:11, padding:3, gap:2 }}>
-          <button onClick={()=>{if(mode!=="camera"){stopCam();setMode("camera");}}} style={{ background:mode==="camera"?"rgba(255,255,255,.22)":"transparent", border:"none", borderRadius:9, padding:"6px 14px", fontSize:12, fontWeight:600, color:"#fff", cursor:"pointer" }}>📷 Camera</button>
-          <button onClick={()=>{stopCam();setMode("upload");}} style={{ background:mode==="upload"?"rgba(255,255,255,.22)":"transparent", border:"none", borderRadius:9, padding:"6px 14px", fontSize:12, fontWeight:600, color:"#fff", cursor:"pointer" }}>🖼 Upload</button>
+          <button onClick={() => { if (mode !== "camera") { stopCam(); setMode("camera"); } }} style={{ background:mode==="camera"?"rgba(255,255,255,.22)":"transparent", border:"none", borderRadius:9, padding:"6px 14px", fontSize:12, fontWeight:600, color:"#fff", cursor:"pointer" }}>📷 Camera</button>
+          <button onClick={() => { stopCam(); setMode("upload"); }} style={{ background:mode==="upload"?"rgba(255,255,255,.22)":"transparent", border:"none", borderRadius:9, padding:"6px 14px", fontSize:12, fontWeight:600, color:"#fff", cursor:"pointer" }}>🖼 Upload</button>
         </div>
-        <div style={{ background:"rgba(255,255,255,.16)", border:"1px solid rgba(255,255,255,.22)", borderRadius:11, padding:"6px 10px", fontSize:11, color:"#fff", display:"flex", gap:5 }}>
-          <span>{tcg?.emoji}</span><span>{lang?.flag}</span>
+        <div style={{ background:"rgba(255,255,255,.16)", border:"1px solid rgba(255,255,255,.22)", borderRadius:11, padding:"6px 10px", fontSize:11, color:"#fff", display:"flex", gap:6 }}>
+          <span style={{ fontWeight:700 }}>{tcg?.shortName}</span><span>·</span><span>{lang?.flag}</span>
         </div>
       </div>
 
-      {/* Camera mode */}
       {mode === "camera" && (
         <>
           <video ref={videoRef} playsInline muted autoPlay style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", display:status==="live"?"block":"none" }}/>
           {flash && <div style={{ position:"absolute", inset:0, background:"#fff", opacity:.85, zIndex:20 }}/>}
 
-          {status==="starting" && (
+          {status === "starting" && (
             <div style={{ position:"absolute", inset:0, background:C.dark, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16 }}>
               <div style={{ width:50, height:50, border:`3px solid ${C.peach}`, borderTopColor:"transparent", borderRadius:"50%", animation:"spin .8s linear infinite" }}/>
               <div style={{ color:"#fff", fontSize:15, fontWeight:600 }}>Opening camera…</div>
-              <div style={{ fontSize:12, color:"rgba(255,255,255,.5)", textAlign:"center", padding:"0 40px", lineHeight:1.7 }}>Tap <strong style={{color:"#fff"}}>Allow</strong> when prompted</div>
+              <div style={{ fontSize:12, color:"rgba(255,255,255,.5)", textAlign:"center", padding:"0 40px", lineHeight:1.7 }}>Tap <strong style={{color:"#fff"}}>Allow</strong> when prompted · Locking to 1× main lens</div>
             </div>
           )}
-          {status==="error" && (
+          {status === "error" && (
             <div style={{ position:"absolute", inset:0, background:C.dark, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"32px 24px", gap:14, textAlign:"center" }}>
               <div style={{ fontSize:44 }}>📷</div>
               <div style={{ fontSize:18, fontWeight:700, color:C.coral }}>Camera Error</div>
               <div style={{ fontSize:13, color:"rgba(255,255,255,.6)", lineHeight:1.7, whiteSpace:"pre-line", maxWidth:320 }}>{errMsg}</div>
               <button onClick={startCam} style={{ background:C.peachDk, border:"none", borderRadius:12, padding:"12px 28px", fontSize:14, fontWeight:700, color:"#fff", cursor:"pointer", marginTop:6 }}>Try Again</button>
-              <button onClick={()=>{stopCam();setMode("upload");}} style={{ background:"transparent", border:"1px solid rgba(255,255,255,.2)", borderRadius:12, padding:"10px 28px", fontSize:13, color:"rgba(255,255,255,.5)", cursor:"pointer" }}>Use Upload instead</button>
+              <button onClick={() => { stopCam(); setMode("upload"); }} style={{ background:"transparent", border:"1px solid rgba(255,255,255,.2)", borderRadius:12, padding:"10px 28px", fontSize:13, color:"rgba(255,255,255,.5)", cursor:"pointer" }}>Use Upload instead</button>
             </div>
           )}
-          {status==="live" && (
-            <>
-          {/* Full-screen card frame guide — card fills entire screen */}
+
+          {/* Full-screen framing guide */}
           <div style={{ position:"absolute", inset:0, zIndex:4, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            <div ref={frameRef} style={{
-              position:"relative",
-              width:"92%", maxWidth:360,
-              aspectRatio:"63/88",
-            }}>
-              {/* Corner brackets */}
+            <div ref={frameRef} style={{ position:"relative", width:"92%", maxWidth:360, aspectRatio:"63/88" }}>
               {[
-                {top:0,left:0,   borderTop:`3px solid ${C.peach}`,borderLeft:`3px solid ${C.peach}`},
-                {top:0,right:0,  borderTop:`3px solid ${C.peach}`,borderRight:`3px solid ${C.peach}`},
-                {bottom:0,left:0,borderBottom:`3px solid ${C.peach}`,borderLeft:`3px solid ${C.peach}`},
-                {bottom:0,right:0,borderBottom:`3px solid ${C.peach}`,borderRight:`3px solid ${C.peach}`},
-              ].map((s,i)=><div key={i} style={{ position:"absolute", width:32, height:32, borderRadius:4, ...s }}/>)}
-
-              {/* Dashed border */}
-              <div style={{ position:"absolute", inset:0, border:`1.5px dashed ${hex2rgb(C.peach,.55)}`, borderRadius:8 }}/>
-
-              {/* Scan line */}
-              <div style={{ position:"absolute", left:4, right:4, height:2, top:"50%", background:`linear-gradient(90deg,transparent,${C.peach},transparent)`, boxShadow:`0 0 12px ${C.peach}`, animation:"scanLine 2.2s ease-in-out infinite" }}/>
-
-              {/* Card number region indicator — adapts to TCG */}
-              {tcg?.codeRegion === "bottom-right" && (
-                <div style={{ position:"absolute", bottom:8, right:8, background:"rgba(240,158,122,0.88)", borderRadius:6, padding:"4px 8px", fontSize:10, fontWeight:700, color:"#fff", letterSpacing:"0.04em" }}>
-                  Code ↙ here
-                </div>
-              )}
-              {tcg?.codeRegion === "bottom-left below artwork" && (
-                <div style={{ position:"absolute", bottom:8, left:8, background:"rgba(168,153,204,0.88)", borderRadius:6, padding:"4px 8px", fontSize:10, fontWeight:700, color:"#fff", letterSpacing:"0.04em" }}>
-                  Code ↘ here
-                </div>
-              )}
-              {tcg?.codeRegion === "bottom center" && (
-                <div style={{ position:"absolute", bottom:8, left:"50%", transform:"translateX(-50%)", background:"rgba(232,201,106,0.88)", borderRadius:6, padding:"4px 8px", fontSize:10, fontWeight:700, color:"#fff", letterSpacing:"0.04em", whiteSpace:"nowrap" }}>
-                  Card # bottom
-                </div>
-              )}
+                {top:0,left:0,   borderTop:`3px solid ${C.peach}`, borderLeft:`3px solid ${C.peach}`},
+                {top:0,right:0,  borderTop:`3px solid ${C.peach}`, borderRight:`3px solid ${C.peach}`},
+                {bottom:0,left:0,borderBottom:`3px solid ${C.peach}`, borderLeft:`3px solid ${C.peach}`},
+                {bottom:0,right:0,borderBottom:`3px solid ${C.peach}`, borderRight:`3px solid ${C.peach}`},
+              ].map((s,i) => <div key={i} style={{ position:"absolute", width:32, height:32, borderRadius:4, ...s }}/>)}
+              <div style={{ position:"absolute", inset:0, border:`1.5px dashed ${rgba(C.peach,.55)}`, borderRadius:8 }}/>
+              {status === "live" && <div style={{ position:"absolute", left:4, right:4, height:2, top:"50%", background:`linear-gradient(90deg,transparent,${C.peach},transparent)`, boxShadow:`0 0 12px ${C.peach}`, animation:"scanLine 2.2s ease-in-out infinite" }}/>}
+              {/* Code region hint */}
+              <div style={{ position:"absolute", bottom:8, right:8, background:rgba(C.peach,0.88), borderRadius:6, padding:"4px 8px", fontSize:10, fontWeight:700, color:"#fff", letterSpacing:"0.04em" }}>
+                Code ↙ here
+              </div>
             </div>
           </div>
-              <div style={{ position:"absolute", bottom:0, left:0, right:0, zIndex:5, padding:"16px 24px 40px", background:"linear-gradient(to top,rgba(0,0,0,.75),transparent)" }}>
-                <div style={{ textAlign:"center", marginBottom:14, fontSize:12, color:"rgba(255,255,255,.75)", fontWeight:500 }}>Fit card inside the frame — best quality, 1x zoom</div>
-                <div style={{ display:"flex", justifyContent:"center" }}>
-                  <button onClick={capture} style={{ width:72, height:72, borderRadius:"50%", background:"#fff", border:"4px solid rgba(255,255,255,.35)", cursor:"pointer", padding:0, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 24px rgba(0,0,0,.4)" }}>
-                    <div style={{ width:56, height:56, borderRadius:"50%", background:`linear-gradient(135deg,${C.peach},${C.peachDk})`, boxShadow:`0 0 18px ${hex2rgb(C.peachDk,.6)}` }}/>
-                  </button>
-                </div>
+
+          {status === "live" && (
+            <div style={{ position:"absolute", bottom:0, left:0, right:0, zIndex:5, padding:"16px 24px 40px", background:"linear-gradient(to top,rgba(0,0,0,.75),transparent)" }}>
+              <div style={{ textAlign:"center", marginBottom:14, fontSize:12, color:"rgba(255,255,255,.75)", fontWeight:500 }}>
+                Fit card inside frame · 4K quality · Lens locked
               </div>
-            </>
+              <div style={{ display:"flex", justifyContent:"center" }}>
+                <button onClick={capture} style={{ width:72, height:72, borderRadius:"50%", background:"#fff", border:"4px solid rgba(255,255,255,.35)", cursor:"pointer", padding:0, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 24px rgba(0,0,0,.4)" }}>
+                  <div style={{ width:56, height:56, borderRadius:"50%", background:`linear-gradient(135deg,${C.peach},${C.peachDk})`, boxShadow:`0 0 18px ${rgba(C.peachDk,.6)}` }}/>
+                </button>
+              </div>
+            </div>
           )}
         </>
       )}
 
-      {/* Upload mode */}
       {mode === "upload" && (
         <div style={{ position:"absolute", inset:0, background:C.dark, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 28px", gap:18 }}>
-          <div style={{ width:80, height:80, borderRadius:22, background:hex2rgb(C.peach,.15), border:`2px dashed ${hex2rgb(C.peach,.5)}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:36 }}>🖼</div>
+          <div style={{ width:80, height:80, borderRadius:22, background:rgba(C.peach,.15), border:`2px dashed ${rgba(C.peach,.5)}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:36 }}>🖼</div>
           <div style={{ textAlign:"center" }}>
-            <div style={{ fontSize:22, fontWeight:700, color:"#fff", marginBottom:6 }}>Upload a card photo</div>
-            <div style={{ fontSize:13, color:"rgba(255,255,255,.55)", lineHeight:1.6, maxWidth:260 }}>Choose any photo from your gallery. Use a well-lit, flat photo for best grading accuracy.</div>
+            <div className="display" style={{ fontSize:22, fontWeight:700, color:"#fff", marginBottom:6 }}>Upload a card photo</div>
+            <div style={{ fontSize:13, color:"rgba(255,255,255,.55)", lineHeight:1.6, maxWidth:260 }}>Choose any photo from your gallery. Use a well-lit, flat photo.</div>
           </div>
           <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} style={{ display:"none" }}/>
-          <button onClick={()=>fileRef.current?.click()} style={{ background:`linear-gradient(135deg,${C.peach},${C.peachDk})`, border:"none", borderRadius:14, padding:"14px 32px", fontSize:15, fontWeight:700, color:"#fff", cursor:"pointer", boxShadow:`0 6px 20px ${hex2rgb(C.peachDk,.4)}` }}>
+          <button onClick={() => fileRef.current?.click()} style={{ background:`linear-gradient(135deg,${C.peach},${C.peachDk})`, border:"none", borderRadius:14, padding:"14px 32px", fontSize:15, fontWeight:700, color:"#fff", cursor:"pointer", boxShadow:`0 6px 20px ${rgba(C.peachDk,.4)}` }}>
             Choose Photo
           </button>
           <div style={{ fontSize:11, color:"rgba(255,255,255,.3)" }}>Supports JPG, PNG, HEIC</div>
@@ -1022,9 +1109,12 @@ function CaptureScreen({ user, ctx, onCapture, onBack }) {
    SCREEN: PROCESSING
 ═══════════════════════════════════════════════════════════════════════════ */
 const STEPS = [
-  "Analysing card image…","Reading card code…","Querying card databases…",
-  "Cross-checking apitcg.com…","Cross-checking ygoprodeck.com…",
-  "Detecting language…","Listing candidates…","Building report…",
+  "Analysing card image…",
+  "Reading card code…",
+  "Detecting language…",
+  "Identifying rarity…",
+  "Listing candidates…",
+  "Building report…",
 ];
 
 function ProcessingScreen({ photos, ctx, onDone }) {
@@ -1033,41 +1123,40 @@ function ProcessingScreen({ photos, ctx, onDone }) {
   const ran = useRef(false);
 
   useEffect(() => {
-    if(ran.current) return; ran.current=true;
-    let i=0;
-    const iv = setInterval(()=>{
+    if (ran.current) return; ran.current = true;
+    let i = 0;
+    const iv = setInterval(() => {
       i++; setStep(i); setPct(Math.round((i/STEPS.length)*100));
-      if(i>=STEPS.length-1){
+      if (i >= STEPS.length - 1) {
         clearInterval(iv);
-        // Only identification — grading parked per v7 spec
-        boboaIdentify({ imageDataUrl:photos.full, tcgType:ctx.tcg, language:ctx.lang })
-          .then(idResult => setTimeout(()=>onDone({ identify:idResult, grade:null }),500));
+        boboaIdentify({ imageDataUrl: photos.full, tcgType: ctx.tcg, language: ctx.lang })
+          .then(idResult => setTimeout(() => onDone({ identify: idResult }), 500));
       }
     }, 340);
-    return ()=>clearInterval(iv);
+    return () => clearInterval(iv);
   }, [photos, ctx, onDone]);
 
   return (
     <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:22, padding:"40px 30px", position:"relative", overflow:"hidden" }}>
       <style>{CSS}</style>
-      <div style={{ position:"absolute", top:"20%", left:"-20%", width:"60%", height:"40%", background:hex2rgb(C.peach,.18), borderRadius:"50%", filter:"blur(80px)" }}/>
-      <div style={{ position:"absolute", bottom:"15%", right:"-20%", width:"60%", height:"40%", background:hex2rgb(C.lav,.18), borderRadius:"50%", filter:"blur(80px)" }}/>
+      <div style={{ position:"absolute", top:"20%", left:"-20%", width:"60%", height:"40%", background:rgba(C.peach,.18), borderRadius:"50%", filter:"blur(80px)" }}/>
+      <div style={{ position:"absolute", bottom:"15%", right:"-20%", width:"60%", height:"40%", background:rgba(C.lav,.18), borderRadius:"50%", filter:"blur(80px)" }}/>
 
       <div className="r1" style={{ position:"relative", width:100, height:100, zIndex:1 }}>
-        <div style={{ position:"absolute", inset:0, border:`3px solid ${hex2rgb(C.peach,.22)}`, borderRadius:"50%" }}/>
+        <div style={{ position:"absolute", inset:0, border:`3px solid ${rgba(C.peach,.22)}`, borderRadius:"50%" }}/>
         <div style={{ position:"absolute", inset:0, border:"3px solid transparent", borderTopColor:C.peachDk, borderRadius:"50%", animation:"spin .9s linear infinite" }}/>
         <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
-          <span style={{ fontSize:22, fontWeight:700, color:C.peachDk }}>{pct}%</span>
+          <span className="display" style={{ fontSize:22, fontWeight:700, color:C.peachDk }}>{pct}%</span>
         </div>
       </div>
       <div className="r2" style={{ textAlign:"center", zIndex:1 }}>
-        <div style={{ fontSize:24, fontWeight:700, marginBottom:5 }}>BoBoa AI working…</div>
-        <div style={{ fontSize:13, color:C.sub }}>{STEPS[step-1]||STEPS[0]}</div>
+        <div className="display" style={{ fontSize:24, fontWeight:700, marginBottom:5 }}>BoBoa AI working…</div>
+        <div style={{ fontSize:13, color:C.sub }}>{STEPS[step-1] || STEPS[0]}</div>
       </div>
       <div style={{ width:"100%", maxWidth:290, height:5, background:C.deep, borderRadius:99, zIndex:1 }}>
         <div style={{ height:"100%", width:`${pct}%`, background:`linear-gradient(90deg,${C.peach},${C.peachDk})`, borderRadius:99, transition:"width .35s" }}/>
       </div>
-      {photos.corners&&(
+      {photos.corners && (
         <div className="r3" style={{ width:"100%", maxWidth:220, textAlign:"center", zIndex:1 }}>
           <div style={{ fontSize:10, color:C.dim, marginBottom:8, letterSpacing:".1em" }} className="mono">CORNERS · EXTRACTED</div>
           <img src={photos.corners} alt="corners" style={{ width:"100%", borderRadius:12, border:`1px solid ${C.bord}` }}/>
@@ -1078,61 +1167,42 @@ function ProcessingScreen({ photos, ctx, onDone }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SCREEN: CARD PICKER — AI returns candidates, user selects
+   SCREEN: CARD PICKER
 ═══════════════════════════════════════════════════════════════════════════ */
-function CardPickerScreen({ photos, aiData, ctx, onSelect, onRescan }) {
+function CardPickerScreen({ photos, aiData, ctx, onSelect, onRescan, onOpenImage }) {
   const idResult = aiData?.identify;
   const candidates = idResult?.success ? (idResult.data?.candidates || []) : [];
 
-  const [selected, setSelected]   = useState(null);
-  const [manualId, setManualId]   = useState("");
-  const [showManual, setShowManual] = useState(candidates.length === 0);
+  const [selected,    setSelected]    = useState(candidates[0]?.cardId || null);
+  const [manualId,    setManualId]    = useState("");
+  const [showManual,  setShowManual]  = useState(candidates.length === 0);
+  const [lookingUp,   setLookingUp]   = useState(false);
 
-  const tcg = TCG_TYPES.find(t=>t.id===ctx.tcg);
-  const lang = LANGUAGES.find(l=>l.id===ctx.lang);
-
-  const [lookingUp, setLookingUp] = useState(false);
+  const tcg  = TCG_TYPES.find(t => t.id === ctx.tcg);
+  const lang = LANGUAGES.find(l => l.id === ctx.lang);
 
   const handleConfirm = async () => {
     const cardId = showManual ? manualId.trim().toUpperCase() : selected;
-    if(!cardId) return;
-
+    if (!cardId) return;
     setLookingUp(true);
-    const aiCard = candidates.find(c=>c.cardId===cardId);
-    // Use AI's extracted name as fallback — fixes "Unknown" bug
+    const aiCard = candidates.find(c => c.cardId === cardId);
     const fallbackName = aiCard?.name || candidates[0]?.name || "";
-    const dbResult = await lookupCardFromAPIs(cardId, ctx.tcg, ctx.lang, fallbackName);
+    const dbResult = await lookupCard({ cardId, tcg: ctx.tcg, language: ctx.lang, fallbackName });
     setLookingUp(false);
 
     onSelect({
+      ...dbResult,
       cardId,
       tcgType: ctx.tcg,
-      name:      dbResult.name    || fallbackName || "Unknown",
-      nameJP:    dbResult.nameJP  || aiCard?.nameOriginal || "",
-      set:       dbResult.set     || aiCard?.set      || "",
-      setName:   dbResult.setName || aiCard?.setName  || "",
-      rarity:    dbResult.rarity  || aiCard?.rarity   || "",
-      type:      dbResult.type    || aiCard?.type     || "",
-      color:     dbResult.color   || "",
-      cost:      dbResult.cost    ?? null,
-      power:     dbResult.power   || null,
-      ability:   dbResult.ability || "",
-      image:     dbResult.image   || null,
-      language:  idResult?.data?.language || ctx.lang,
-      confidence:aiCard?.confidence || (dbResult.found?70:30),
-      evidence:  aiCard?.evidence  || "",
-      inDB:      dbResult.found,
-      dbSource:  dbResult.source,
-      dbSources: dbResult.dbSources || [],
-      mercari:   dbResult.mercari  || null,
-      prices:    dbResult.prices   || null,
-      yuyuteiSlug:dbResult.yuyuteiSlug||null,
-      atk:dbResult.atk, def:dbResult.def, level:dbResult.level,
-      attribute:dbResult.attribute, race:dbResult.race, archetype:dbResult.archetype,
+      // Prefer AI-detected rarity, then DB rarity, then blank
+      aiRarity: aiCard?.rarity || "",
+      language: idResult?.data?.language || ctx.lang,
+      confidence: aiCard?.confidence || (dbResult.ok ? 70 : 40),
+      evidence: aiCard?.evidence || "",
     });
   };
 
-  const confColor = c => c>=85?C.sageDk:c>=65?C.butterDk:C.coral;
+  const confColor = (c) => c >= 85 ? C.sageDk : c >= 65 ? C.butterDk : C.coral;
 
   return (
     <div style={{ maxWidth:430, margin:"0 auto", background:C.bg, minHeight:"100vh" }}>
@@ -1140,32 +1210,44 @@ function CardPickerScreen({ photos, aiData, ctx, onSelect, onRescan }) {
       <div style={{ background:C.surf, borderBottom:`1px solid ${C.bord}`, padding:"46px 18px 12px", position:"sticky", top:0, zIndex:40 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <SBtn onClick={onRescan}>← Rescan</SBtn>
-          <div style={{ fontSize:15, fontWeight:700 }}>Select Card</div>
+          <div className="display" style={{ fontSize:15, fontWeight:700 }}>Confirm Card</div>
           <div style={{ width:72 }}/>
         </div>
       </div>
 
       <div style={{ padding:"14px 16px 110px", display:"flex", flexDirection:"column", gap:12 }}>
-
-        {/* Photos */}
+        {/* Photos — tap to zoom */}
         <div className="r1" style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:10 }}>
-          <Card><img src={photos.full} alt="card" style={{ width:"100%", aspectRatio:"63/88", objectFit:"cover", display:"block" }}/><div style={{ padding:"6px 12px", fontSize:10, color:C.sub }} className="mono">CAPTURED</div></Card>
-          <Card><img src={photos.corners} alt="corners" style={{ width:"100%", aspectRatio:"1/1", objectFit:"cover", display:"block" }}/><div style={{ padding:"6px 12px", fontSize:10, color:C.sub }} className="mono">CORNERS</div></Card>
-        </div>
-
-        {/* Language / type detection */}
-        {idResult?.data && (
-          <div className="r2">
+          <button onClick={() => onOpenImage({ image: photos.full, label: "Full card" })}
+            style={{ background:"transparent", border:"none", padding:0, cursor:"zoom-in", textAlign:"left" }}>
             <Card>
-              <div style={{ padding:"12px 16px", display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
-                <Pill ch={`${lang?.flag} ${idResult.data.language||ctx.lang}`} color={C.skyDk}/>
-                <Pill ch={`${tcg?.emoji} ${tcg?.name}`} color={tcg?.color||C.coral}/>
-                {idResult.data.languageEvidence && <div style={{ fontSize:11, color:C.sub, width:"100%", marginTop:4 }}>🗣 {idResult.data.languageEvidence}</div>}
-                {idResult.data.cardIdRegion && <div style={{ fontSize:11, color:C.sub }}>📍 Code location: {idResult.data.cardIdRegion}</div>}
+              <img src={photos.full} alt="card" style={{ width:"100%", aspectRatio:"63/88", objectFit:"cover", display:"block" }}/>
+              <div style={{ padding:"6px 12px", fontSize:10, color:C.sub, display:"flex", justifyContent:"space-between" }} className="mono">
+                <span>CAPTURED</span><span>🔍 tap to zoom</span>
               </div>
             </Card>
-          </div>
-        )}
+          </button>
+          <button onClick={() => onOpenImage({ image: photos.corners, label: "4 Corners" })}
+            style={{ background:"transparent", border:"none", padding:0, cursor:"zoom-in", textAlign:"left" }}>
+            <Card>
+              <img src={photos.corners} alt="corners" style={{ width:"100%", aspectRatio:"1/1", objectFit:"cover", display:"block" }}/>
+              <div style={{ padding:"6px 12px", fontSize:10, color:C.sub, display:"flex", justifyContent:"space-between" }} className="mono">
+                <span>CORNERS</span><span>🔍</span>
+              </div>
+            </Card>
+          </button>
+        </div>
+
+        {/* Language / TCG detected */}
+        <div className="r2">
+          <Card>
+            <div style={{ padding:"12px 16px", display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+              <Pill ch={`${lang?.flag} ${idResult?.data?.language || ctx.lang}`} color={C.skyDk}/>
+              <Pill ch={`${tcg?.shortName}`} color={tcg?.color || C.coral}/>
+              {idResult?.data?.cardIdRegion && <div style={{ fontSize:11, color:C.sub }}>📍 {idResult.data.cardIdRegion}</div>}
+            </div>
+          </Card>
+        </div>
 
         {/* Candidate list */}
         {candidates.length > 0 && (
@@ -1175,30 +1257,28 @@ function CardPickerScreen({ photos, aiData, ctx, onSelect, onRescan }) {
               <div style={{ padding:"8px 0" }}>
                 {candidates.map((c,i) => {
                   const sel = selected === c.cardId;
-                  const db  = CARD_DB[c.cardId];
                   return (
-                    <button key={i} onClick={()=>{ setSelected(c.cardId); setShowManual(false); }} style={{
+                    <button key={i} onClick={() => { setSelected(c.cardId); setShowManual(false); }} style={{
                       display:"block", width:"100%", textAlign:"left",
-                      background: sel ? hex2rgb(C.peachDk,.08) : "transparent",
+                      background: sel ? rgba(C.peachDk,.08) : "transparent",
                       border:"none",
                       borderLeft: sel ? `3px solid ${C.peachDk}` : "3px solid transparent",
-                      borderBottom: i<candidates.length-1 ? `1px solid ${C.line}` : "none",
-                      padding:"12px 16px",
-                      cursor:"pointer",
+                      borderBottom: i < candidates.length - 1 ? `1px solid ${C.line}` : "none",
+                      padding:"12px 16px", cursor:"pointer",
                     }}>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
                         <div style={{ flex:1 }}>
                           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
                             <span className="mono" style={{ fontSize:12.5, fontWeight:700, color:C.peachDk }}>{c.cardId}</span>
-                            {db && <Pill ch="✓ In DB" color={C.sageDk} s={{ fontSize:9 }}/>}
+                            {c.rarity && <Pill ch={c.rarity} color={C.lavDk} s={{fontSize:9}}/>}
                           </div>
-                          <div style={{ fontSize:16, fontWeight:700, lineHeight:1.1, marginBottom:2 }}>{c.name}</div>
-                          {c.nameOriginal && c.nameOriginal!==c.name && <div className="mono" style={{ fontSize:11, color:C.dim }}>{c.nameOriginal}</div>}
+                          <div className="display" style={{ fontSize:16, fontWeight:700, lineHeight:1.1, marginBottom:2 }}>{c.name}</div>
+                          {c.nameOriginal && c.nameOriginal !== c.name && <div className="mono" style={{ fontSize:11, color:C.dim }}>{c.nameOriginal}</div>}
                           {c.setName && <div style={{ fontSize:12, color:C.sub, marginTop:3 }}>{c.setName}</div>}
                           {c.evidence && <div style={{ fontSize:11, color:C.dim, marginTop:4, lineHeight:1.5 }}>💡 {c.evidence}</div>}
                         </div>
                         <div style={{ textAlign:"right", flexShrink:0 }}>
-                          <div style={{ fontSize:22, fontWeight:800, color:confColor(c.confidence), lineHeight:1 }}>{c.confidence}%</div>
+                          <div className="display" style={{ fontSize:22, fontWeight:800, color:confColor(c.confidence), lineHeight:1 }}>{c.confidence}%</div>
                           <div style={{ fontSize:10, color:C.sub }}>match</div>
                         </div>
                       </div>
@@ -1210,32 +1290,20 @@ function CardPickerScreen({ photos, aiData, ctx, onSelect, onRescan }) {
           </div>
         )}
 
-        {/* None match — manual entry */}
+        {/* Manual entry */}
         <div className="r4">
           <Card>
-            <button onClick={()=>setShowManual(m=>!m)} style={{
-              display:"flex", justifyContent:"space-between", alignItems:"center",
-              width:"100%", background:"transparent", border:"none",
-              padding:"13px 16px", cursor:"pointer",
-            }}>
+            <button onClick={() => setShowManual(m => !m)} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", width:"100%", background:"transparent", border:"none", padding:"13px 16px", cursor:"pointer" }}>
               <div style={{ fontSize:13.5, fontWeight:600, color:C.ink }}>
-                {candidates.length>0 ? "None match — enter manually" : "Enter card number manually"}
+                {candidates.length > 0 ? "None match — enter manually" : "Enter card number manually"}
               </div>
-              <span style={{ fontSize:18, color:C.sub }}>{showManual?"▲":"▼"}</span>
+              <span style={{ fontSize:18, color:C.sub }}>{showManual ? "▲" : "▼"}</span>
             </button>
             {showManual && (
               <div style={{ padding:"0 16px 16px", borderTop:`1px solid ${C.line}` }}>
-                <div style={{ fontSize:12, color:C.sub, margin:"12px 0 8px", lineHeight:1.5 }}>
-                  {tcg?.codeHint}
-                </div>
-                <input type="text" value={manualId} onChange={e=>{setManualId(e.target.value.toUpperCase());setSelected(null);}} placeholder={tcg?.id==="onepiece"?"e.g. OP07-051":tcg?.id==="yugioh"?"e.g. LOCR-JP001":"e.g. SV3-185"}
-                  style={{ width:"100%", background:C.bg, border:`1.5px solid ${C.bord}`, borderRadius:11, padding:"11px 12px", fontSize:14, color:C.ink, outline:"none", fontFamily:"JetBrains Mono,monospace" }}
-                  onFocus={e=>e.target.style.borderColor=C.peachDk} onBlur={e=>e.target.style.borderColor=C.bord}/>
-                {manualId && (
-                  <div style={{ marginTop:8, fontSize:12, color: CARD_DB[manualId] ? C.sageDk : C.sub }}>
-                    {CARD_DB[manualId] ? `✓ Found: ${CARD_DB[manualId].name}` : "Not in local DB — will use AI data"}
-                  </div>
-                )}
+                <div style={{ fontSize:12, color:C.sub, margin:"12px 0 8px", lineHeight:1.5 }}>{tcg?.codeHint}</div>
+                <input type="text" value={manualId} onChange={e => { setManualId(e.target.value.toUpperCase()); setSelected(null); }} placeholder={tcg?.id === "onepiece" ? "e.g. OP07-051" : "e.g. LOCH-JP003"}
+                  style={{ width:"100%", background:C.bg, border:`1.5px solid ${C.bord}`, borderRadius:11, padding:"11px 12px", fontSize:14, color:C.ink, outline:"none", fontFamily:"JetBrains Mono, monospace" }}/>
               </div>
             )}
           </Card>
@@ -1244,10 +1312,10 @@ function CardPickerScreen({ photos, aiData, ctx, onSelect, onRescan }) {
 
       <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, background:"rgba(250,247,242,.96)", backdropFilter:"blur(16px)", borderTop:`1px solid ${C.bord}`, padding:"11px 16px 28px", display:"flex", gap:10 }}>
         <SBtn onClick={onRescan} s={{ flex:1, padding:"12px" }}>📷 Rescan</SBtn>
-        <PBtn onClick={handleConfirm} disabled={(!selected&&!manualId.trim())||lookingUp} s={{ flex:2, padding:"12px", fontSize:14 }}>
+        <PBtn onClick={handleConfirm} disabled={(!selected && !manualId.trim()) || lookingUp} s={{ flex:2, padding:"12px", fontSize:14 }}>
           {lookingUp ? (
-            <><div style={{ width:16,height:16,border:"2px solid rgba(255,255,255,.4)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin .7s linear infinite" }}/> Looking up…</>
-          ) : "Confirm & Lookup →"}
+            <><div style={{ width:16, height:16, border:"2px solid rgba(255,255,255,.4)", borderTopColor:"#fff", borderRadius:"50%", animation:"spin .7s linear infinite" }}/> Looking up…</>
+          ) : "Confirm & Continue →"}
         </PBtn>
       </div>
     </div>
@@ -1255,12 +1323,14 @@ function CardPickerScreen({ photos, aiData, ctx, onSelect, onRescan }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SCREEN: RARITY PICKER
+   SCREEN: RARITY PICKER — uses correct JP/EN system per TCG
 ═══════════════════════════════════════════════════════════════════════════ */
-function RarityScreen({ photos, card, aiData, ctx, onConfirm, onBack }) {
-  const rarities = RARITIES[ctx.tcg] || RARITIES.onepiece;
-  const aiRarity = aiData?.identify?.data?.candidates?.[0]?.rarity;
-  const [rarity, setRarity] = useState(aiRarity && rarities.find(r=>r.id===aiRarity) ? aiRarity : rarities[0]?.id);
+function RarityScreen({ photos, card, ctx, onConfirm, onBack, onOpenImage }) {
+  const rarityList = RARITIES[ctx.tcg]?.[ctx.lang] || [];
+  const aiRarity = card.aiRarity || card.rarityFromDB;
+  const [rarity, setRarity] = useState(
+    rarityList.find(r => r.id === aiRarity)?.id || rarityList[0]?.id
+  );
 
   return (
     <div style={{ maxWidth:430, margin:"0 auto", background:C.bg, minHeight:"100vh" }}>
@@ -1268,7 +1338,7 @@ function RarityScreen({ photos, card, aiData, ctx, onConfirm, onBack }) {
       <div style={{ background:C.surf, borderBottom:`1px solid ${C.bord}`, padding:"46px 18px 12px", position:"sticky", top:0, zIndex:40 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <SBtn onClick={onBack}>← Back</SBtn>
-          <div style={{ fontSize:15, fontWeight:700 }}>Select Rarity</div>
+          <div className="display" style={{ fontSize:15, fontWeight:700 }}>Select Rarity · {ctx.lang}</div>
           <div style={{ width:72 }}/>
         </div>
       </div>
@@ -1277,12 +1347,15 @@ function RarityScreen({ photos, card, aiData, ctx, onConfirm, onBack }) {
         <div className="r1">
           <Card>
             <div style={{ padding:"14px 16px", display:"flex", gap:12, alignItems:"center" }}>
-              <img src={photos.full} alt="card" style={{ width:70, aspectRatio:"63/88", objectFit:"cover", borderRadius:9, boxShadow:"0 4px 14px rgba(28,27,38,.18)" }}/>
-              <div>
+              <button onClick={() => onOpenImage({ image: photos.full, label: card.name })}
+                style={{ background:"transparent", border:"none", padding:0, cursor:"zoom-in" }}>
+                <img src={photos.full} alt="card" style={{ width:70, aspectRatio:"63/88", objectFit:"cover", borderRadius:9, boxShadow:"0 4px 14px rgba(28,27,38,.18)" }}/>
+              </button>
+              <div style={{ flex:1, minWidth:0 }}>
                 <div className="mono" style={{ fontSize:10, color:C.peachDk, marginBottom:4, fontWeight:600 }}>{card.cardId}</div>
-                <div style={{ fontSize:20, fontWeight:700, lineHeight:1.1, marginBottom:4 }}>{card.name}</div>
-                <div style={{ fontSize:12, color:C.sub }}>{card.setName}</div>
-                {aiRarity && <div style={{ fontSize:11, color:C.dim, marginTop:4 }}>AI suggested: <strong style={{color:C.ink}}>{aiRarity}</strong></div>}
+                <div className="display" style={{ fontSize:18, fontWeight:700, lineHeight:1.15, marginBottom:4 }}>{card.name}</div>
+                {card.setName && <div style={{ fontSize:12, color:C.sub, marginBottom:3 }}>{card.setName}</div>}
+                {aiRarity && <div style={{ fontSize:11, color:C.dim }}>AI suggested rarity: <strong style={{color:C.ink}}>{aiRarity}</strong></div>}
               </div>
             </div>
           </Card>
@@ -1290,19 +1363,32 @@ function RarityScreen({ photos, card, aiData, ctx, onConfirm, onBack }) {
 
         <div className="r2">
           <Card>
-            <Hdr accent={C.lavDk}>Select rarity · {TCG_TYPES.find(t=>t.id===ctx.tcg)?.name}</Hdr>
-            <div style={{ padding:"12px 14px 14px" }}>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:7 }}>
-                {rarities.map(r=>{
-                  const sel=rarity===r.id, hasPrice=CARD_DB[card.cardId]?.rarities?.[r.id];
-                  return <button key={r.id} onClick={()=>setRarity(r.id)} style={{ background:sel?r.color:C.surf, color:sel?"#fff":C.ink, border:`1.5px solid ${sel?r.color:C.bord}`, borderRadius:11, padding:"10px 6px", cursor:"pointer", textAlign:"center", boxShadow:sel?`0 4px 12px ${hex2rgb(r.color,.3)}`:"none", transition:"all .15s", position:"relative" }}>
-                    <div style={{ fontSize:13, fontWeight:700 }}>{r.label}</div>
-                    {hasPrice && <div style={{ position:"absolute", top:4, right:4, width:6, height:6, borderRadius:"50%", background:C.sageDk }}/>}
-                  </button>;
+            <Hdr accent={C.lavDk}>
+              {ctx.lang === "JP" ? "Select rarity · Japanese (OCG) · Yuyu-tei naming" : "Select rarity · English (TCG)"}
+            </Hdr>
+            <div style={{ padding:"14px" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                {rarityList.map(r => {
+                  const sel = rarity === r.id;
+                  return (
+                    <button key={r.id} onClick={() => setRarity(r.id)} style={{
+                      background: sel ? r.color : C.surf,
+                      color: sel ? "#fff" : C.ink,
+                      border: `1.5px solid ${sel ? r.color : C.bord}`,
+                      borderRadius:12, padding:"11px 10px", cursor:"pointer", textAlign:"left",
+                      boxShadow: sel ? `0 4px 14px ${rgba(r.color,.3)}` : "none",
+                      transition:"all .15s",
+                    }}>
+                      <div className="display" style={{ fontSize:14, fontWeight:700, marginBottom:2 }}>{r.label}</div>
+                      <div style={{ fontSize:10.5, opacity: sel ? 0.9 : 0.65 }}>{r.full}</div>
+                    </button>
+                  );
                 })}
               </div>
-              <div style={{ fontSize:11, color:C.dim, marginTop:10 }}>
-                Green dot = price data available. AI suggested: <strong style={{color:C.ink}}>{aiRarity||"—"}</strong>
+              <div style={{ fontSize:11, color:C.dim, marginTop:12, lineHeight:1.5 }}>
+                {ctx.lang === "JP"
+                  ? "Japanese OCG rarities use the naming convention from Yuyu-tei — the leading JP TCG shop."
+                  : "English TCG rarities from official One Piece / Yu-Gi-Oh! releases."}
               </div>
             </div>
           </Card>
@@ -1311,8 +1397,8 @@ function RarityScreen({ photos, card, aiData, ctx, onConfirm, onBack }) {
 
       <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, background:"rgba(250,247,242,.96)", backdropFilter:"blur(16px)", borderTop:`1px solid ${C.bord}`, padding:"11px 16px 28px", display:"flex", gap:10 }}>
         <SBtn onClick={onBack} s={{ flex:1, padding:"12px" }}>← Back</SBtn>
-        <PBtn onClick={()=>onConfirm({...card, rarity})} s={{ flex:2, padding:"12px", fontSize:14 }}>
-          View Prices & Grade →
+        <PBtn onClick={() => onConfirm({ ...card, rarity })} s={{ flex:2, padding:"12px", fontSize:14 }}>
+          View Prices & Listings →
         </PBtn>
       </div>
     </div>
@@ -1320,34 +1406,22 @@ function RarityScreen({ photos, card, aiData, ctx, onConfirm, onBack }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SCREEN: RESULT — Prices + BoBoaGrade
+   SCREEN: RESULT — deep-link to Mercari/Yahoo/Yuyu-tei/eBay
 ═══════════════════════════════════════════════════════════════════════════ */
-function ResultScreen({ photos, card, aiData, user, onRescan }) {
-  const [tab, setTab]       = useState("prices");
-  const [tf,  setTf]        = useState("1Y");
-  const [srcFilter, setSrcFilter] = useState(null);
+function ResultScreen({ photos, card, user, onRescan, onOpenImage }) {
+  const [tab, setTab] = useState("sold");
 
-  const gradeResult = aiData?.grade;
-  const grade = gradeResult?.success ? gradeResult.data : null;
+  const rarityList = RARITIES[card.tcgType]?.[card.language] || [];
+  const rarOpt = rarityList.find(r => r.id === card.rarity) || rarityList[0];
+  const tcg = TCG_TYPES.find(t => t.id === card.tcgType);
 
-  const priceData = getPriceData({ cardId:card.cardId, rarity:card.rarity, language:card.language });
-  const yuyutei = priceData?.yuyutei;
-
-  const tcg = TCG_TYPES.find(t=>t.id===card.tcgType||CARD_DB[card.cardId]?.tcg);
-  const rarities = RARITIES[tcg?.id||"onepiece"]||[];
-  const rarOpt = rarities.find(r=>r.id===card.rarity)||rarities[0];
-
-  const bgsColor = s => s>=9.5?C.lavDk:s>=9?C.sageDk:s>=8?C.butterDk:s>=7?C.peachDk:C.coral;
-
-  const searchQ = card.language==="JP" ? `${card.nameJP||card.name} ${card.cardId}` : `${card.name} ${card.cardId}`;
-  const mercariUrl = `https://jp.mercari.com/search?keyword=${encodeURIComponent(searchQ)}&item_condition_id=1,2,3`;
-
-  // Scrollable sales list (3yr, newest first, source filter)
-  const threeYrsAgo = new Date(); threeYrsAgo.setFullYear(threeYrsAgo.getFullYear()-3);
-  const sales = (priceData?.allSales||[])
-    .filter(s=>new Date(s.date)>=threeYrsAgo)
-    .filter(s=>!srcFilter||s.sourceId===srcFilter)
-    .slice(0,100);
+  const links = buildSearchLinks({
+    cardId: card.cardId, cardName: card.name, rarityLabel: rarOpt?.label || card.rarity,
+    tcg: card.tcgType, language: card.language, setSlug: card.setSlug,
+  });
+  const soldLinks    = links.filter(l => l.category === "sold" || l.category === "both");
+  const activeLinks  = links.filter(l => l.category === "active" || l.category === "both");
+  const infoLinks    = links.filter(l => l.category === "info");
 
   return (
     <div style={{ maxWidth:430, margin:"0 auto", background:C.bg, minHeight:"100vh" }}>
@@ -1358,23 +1432,28 @@ function ResultScreen({ photos, card, aiData, user, onRescan }) {
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
           <SBtn onClick={onRescan}>📷 Scan</SBtn>
           <div style={{ display:"flex", gap:4 }}>
-            <Pill ch="✓ BoBoa AI" color={C.sageDk}/>
-            <Pill ch={rarOpt?.label||card.rarity} color={rarOpt?.color||C.skyDk}/>
+            {card.ok ? <Pill ch="✓ DB Match" color={C.sageDk}/> : <Pill ch="AI Only" color={C.butterDk}/>}
+            <Pill ch={rarOpt?.label || card.rarity} color={rarOpt?.color || C.skyDk}/>
           </div>
         </div>
 
         <div style={{ display:"flex", gap:13, alignItems:"flex-start", marginBottom:10 }}>
-          <img src={photos.full} alt="card" style={{ width:88, aspectRatio:"63/88", objectFit:"cover", borderRadius:11, boxShadow:"0 6px 20px rgba(28,27,38,.2)", flexShrink:0 }}/>
+          <button onClick={() => onOpenImage({ image: photos.full, label: card.name })}
+            style={{ background:"transparent", border:"none", padding:0, cursor:"zoom-in", flexShrink:0 }}>
+            <img src={photos.full} alt="card" style={{ width:88, aspectRatio:"63/88", objectFit:"cover", borderRadius:11, boxShadow:"0 6px 20px rgba(28,27,38,.2)" }}/>
+          </button>
           <div style={{ flex:1, minWidth:0 }}>
-            <div className="mono" style={{ fontSize:10, color:C.peachDk, letterSpacing:".1em", marginBottom:4, fontWeight:600 }}>{card.set} · {card.cardId}</div>
-            <div style={{ fontSize:22, fontWeight:800, lineHeight:1.1, marginBottom:5 }}>{card.name}</div>
+            <div className="mono" style={{ fontSize:10, color:C.peachDk, letterSpacing:".1em", marginBottom:4, fontWeight:600 }}>
+              {card.set || tcg?.shortName} · {card.cardId}
+            </div>
+            <div className="display" style={{ fontSize:20, fontWeight:800, lineHeight:1.1, marginBottom:5 }}>{card.name}</div>
             <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:5 }}>
-              <Pill ch={rarOpt?.label||card.rarity} color={rarOpt?.color} s={{fontSize:10}}/>
+              <Pill ch={rarOpt?.full || card.rarity} color={rarOpt?.color} s={{fontSize:10}}/>
               <Pill ch={card.language} color={C.skyDk} s={{fontSize:10}}/>
-              {tcg && <Pill ch={tcg.emoji+" "+tcg.name} color={tcg.color} s={{fontSize:10}}/>}
+              {tcg && <Pill ch={tcg.shortName} color={tcg.color} s={{fontSize:10}}/>}
             </div>
             <div style={{ fontSize:11.5, color:C.sub, lineHeight:1.65 }}>
-              <strong style={{color:C.ink}}>{card.setName}</strong>
+              {card.setName && <strong style={{color:C.ink}}>{card.setName}</strong>}
               {card.nameJP && <><br/><span className="mono" style={{fontSize:11,color:C.dim}}>{card.nameJP}</span></>}
             </div>
           </div>
@@ -1383,360 +1462,98 @@ function ResultScreen({ photos, card, aiData, user, onRescan }) {
         {/* Quick stats */}
         <div style={{ display:"flex", gap:6, marginBottom:10 }}>
           <div style={{ flex:1, background:C.deep, borderRadius:10, padding:"9px 5px", textAlign:"center" }}>
-            <div style={{ fontSize:10, color:C.sub, marginBottom:2 }}>BoBoa Match</div>
-            <div className="display" style={{ fontSize:15, fontWeight:800, color:card.confidence>=85?C.sageDk:C.butterDk }}>{card.confidence}%</div>
+            <div style={{ fontSize:10, color:C.sub, marginBottom:2 }}>AI Match</div>
+            <div className="display" style={{ fontSize:15, fontWeight:800, color: card.confidence >= 85 ? C.sageDk : C.butterDk }}>{card.confidence}%</div>
           </div>
           <div style={{ flex:1, background:C.deep, borderRadius:10, padding:"9px 5px", textAlign:"center" }}>
-            <div style={{ fontSize:10, color:C.sub, marginBottom:2 }}>DB Match</div>
-            <div className="display" style={{ fontSize:14, fontWeight:800, color:card.dbSource==="api"?C.sageDk:C.butterDk }}>
-              {card.dbSource==="api"?"✓ Live":card.dbSource==="seed"?"Seed":"—"}
-            </div>
+            <div style={{ fontSize:10, color:C.sub, marginBottom:2 }}>Rarity</div>
+            <div className="display" style={{ fontSize:14, fontWeight:800, color: rarOpt?.color || C.ink }}>{rarOpt?.label}</div>
           </div>
-          <div style={{ flex:1.4, background:hex2rgb(C.roseDk,.1), border:`1px solid ${hex2rgb(C.roseDk,.25)}`, borderRadius:10, padding:"9px 5px", textAlign:"center" }}>
-            <div style={{ fontSize:10, color:C.roseDk, marginBottom:2, fontWeight:700 }}>🟠 Mercari Med.</div>
-            <div className="display" style={{ fontSize:14, fontWeight:800, color:C.roseDk }}>
-              {card.mercari?.stats?.medianTHB ? fmtTHB(card.mercari.stats.medianTHB) : (yuyutei ? fmtTHB(yuyutei.buy.thb) : "—")}
-            </div>
+          <div style={{ flex:1.5, background:rgba(C.roseDk,.1), border:`1px solid ${rgba(C.roseDk,.25)}`, borderRadius:10, padding:"9px 5px", textAlign:"center" }}>
+            <div style={{ fontSize:10, color:C.roseDk, marginBottom:2, fontWeight:700 }}>🌐 Live lookups</div>
+            <div className="display" style={{ fontSize:14, fontWeight:800, color:C.roseDk }}>{links.length} sites</div>
           </div>
         </div>
 
         {/* Tabs */}
         <div style={{ display:"flex", borderTop:`1px solid ${C.bord}`, margin:"0 -16px" }}>
-          {[{id:"prices",label:"Prices"},{id:"sales",label:"Sales"},{id:"info",label:"Info"}].map(t=>(
-            <button key={t.id} onClick={()=>setTab(t.id)} style={{ flex:1, background:"none", border:"none", borderBottom:`2px solid ${tab===t.id?C.peachDk:"transparent"}`, color:tab===t.id?C.peachDk:C.sub, padding:"11px 2px", fontSize:12, fontWeight:tab===t.id?700:500, cursor:"pointer" }}>{t.label}</button>
+          {[
+            { id:"sold",   label:"Last Sold",       count: soldLinks.length },
+            { id:"active", label:"Current Listings",count: activeLinks.length },
+            { id:"info",   label:"Card Info",       count: null },
+          ].map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              flex:1, background:"none", border:"none",
+              borderBottom:`2px solid ${tab===t.id?C.peachDk:"transparent"}`,
+              color:tab===t.id?C.peachDk:C.sub, padding:"11px 2px", fontSize:12,
+              fontWeight: tab===t.id ? 700 : 500, cursor:"pointer",
+            }}>
+              {t.label}{t.count ? <span style={{ opacity:0.5, marginLeft:4 }}>({t.count})</span> : ""}
+            </button>
           ))}
         </div>
       </div>
 
       <div style={{ padding:"14px 16px 100px", display:"flex", flexDirection:"column", gap:12 }}>
-
-        {/* ── PRICES ── */}
-        {tab==="prices" && (
+        {/* ── LAST SOLD tab ── */}
+        {tab === "sold" && (
           <>
-            {yuyutei && (
-              <Card accentColor={C.coral} className="r1" s={{ borderColor:hex2rgb(C.coral,.4) }}>
-                <div style={{ padding:"14px 16px 6px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <span style={{ fontSize:18 }}>🏯</span>
-                    <div><div style={{ fontSize:14, fontWeight:700 }}>Yuyu-tei · Tokyo</div><div style={{ fontSize:11, color:C.sub }}>Primary market anchor</div></div>
-                  </div>
-                  <Pill ch="Verified" color={C.sageDk} s={{fontSize:10}}/>
-                </div>
-                <div style={{ padding:"10px 16px 14px" }}>
-                  <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", gap:10 }}>
-                    <div>
-                      <div style={{ fontSize:10.5, color:C.sub, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:3 }}>買取価格 · Buy-back</div>
-                      <div style={{ fontSize:30, fontWeight:700, color:C.coral, lineHeight:1 }}>{fmtTHB(yuyutei.buy.thb)}</div>
-                      <div style={{ fontSize:11, color:C.sub, marginTop:3 }} className="mono">{fmtJPY(yuyutei.buy.jpy)} · {fmtUSD(yuyutei.buy.usd)}</div>
+            <div className="r1" style={{ background:rgba(C.peach,0.1), border:`1px solid ${rgba(C.peachDk,0.25)}`, borderRadius:12, padding:"11px 14px", fontSize:12.5, color:C.sub, lineHeight:1.55 }}>
+              <strong style={{ color:C.ink }}>🔗 Tap any source to view real last-sold prices live.</strong> Queries are already formatted with the card number and rarity.
+            </div>
+            {soldLinks.map((link, i) => (
+              <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className={`r${Math.min(i+1, 5)}`}>
+                <Card s={{ borderColor: rgba(link.color, 0.35) }}>
+                  <div style={{ padding:"14px 16px", display:"flex", alignItems:"center", gap:12 }}>
+                    <div style={{ fontSize:26 }}>{link.icon}</div>
+                    <div style={{ flex:1 }}>
+                      <div className="display" style={{ fontSize:15, fontWeight:700, color:link.color, marginBottom:2 }}>{link.name}</div>
+                      <div style={{ fontSize:12, color:C.sub }}>{link.note}</div>
                     </div>
-                    <a href={yuyutei.buy.url} target="_blank" rel="noopener noreferrer"><SBtn>買取 →</SBtn></a>
-                  </div>
-                </div>
-                <div style={{ borderTop:`1px solid ${C.line}`, padding:"10px 16px 14px" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                    <div>
-                      <div style={{ fontSize:10.5, color:C.sub, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:3 }}>販売価格 · Retail</div>
-                      <div style={{ fontSize:19, fontWeight:700, color:C.ink, lineHeight:1 }}>
-                        {fmtTHB(yuyutei.sell.thb)} <span style={{ fontSize:12, color:C.sub, fontWeight:500 }} className="mono">{fmtJPY(yuyutei.sell.jpy)}</span>
-                      </div>
-                    </div>
-                    <a href={yuyutei.sell.url} target="_blank" rel="noopener noreferrer"><SBtn>販売 →</SBtn></a>
-                  </div>
-                  {yuyutei.buy.thb>0 && yuyutei.sell.thb>0 && (
-                    <div style={{ marginTop:10, background:hex2rgb(C.butter,.2), border:`1px solid ${hex2rgb(C.butterDk,.25)}`, borderRadius:9, padding:"7px 10px", fontSize:11.5, color:C.sub }}>
-                      <strong style={{color:C.ink}}>Spread:</strong> {fmtTHB(yuyutei.sell.thb-yuyutei.buy.thb)} <span style={{color:C.dim}}>({Math.round((1-yuyutei.buy.thb/yuyutei.sell.thb)*100)}% shop margin)</span>
-                    </div>
-                  )}
-                </div>
-              </Card>
-            )}
-
-            {/* Chart — prefer Mercari real data, fall back to seed chart */}
-            {(() => {
-              // Build chart from Mercari listings if we have them
-              let chartData = null;
-              let chartSource = "";
-              if (card.mercari?.listings?.length >= 5) {
-                // Group by month from listing creation or current month if unknown
-                const byMonth = new Map();
-                card.mercari.listings.forEach(l => {
-                  const date = l.createdAt ? new Date(l.createdAt) : new Date();
-                  const ym = date.toISOString().slice(0,7);
-                  if (!byMonth.has(ym)) byMonth.set(ym, []);
-                  byMonth.get(ym).push(l.priceTHB);
-                });
-                chartData = [...byMonth.entries()]
-                  .sort((a,b)=>a[0].localeCompare(b[0]))
-                  .map(([month, prices]) => ({
-                    month,
-                    avg: Math.round(prices.reduce((a,b)=>a+b,0)/prices.length),
-                    min: Math.min(...prices), max: Math.max(...prices),
-                    n: prices.length,
-                  }));
-                chartSource = "Mercari JP · Real listings";
-              } else if (priceData?.chart?.length > 0) {
-                chartData = priceData.chart;
-                chartSource = "Seed data";
-              }
-
-              if (!chartData || chartData.length < 2) return null;
-              return (
-                <Card className="r2">
-                  <Hdr accent={C.peachDk}>Price chart · {chartSource}</Hdr>
-                  <div style={{ padding:"14px 0 10px" }}>
-                    <PriceChart chart={chartData} color={C.peachDk} timeframe={tf} onTF={setTf}/>
+                    <div style={{ fontSize:18, color:C.dim }}>›</div>
                   </div>
                 </Card>
-              );
-            })()}
-
-            {/* Mercari JP live listings — real data */}
-            {card.mercari?.listings?.length > 0 ? (
-              <Card className="r3" s={{ borderColor:hex2rgb(C.roseDk,.4) }}>
-                <Hdr accent={C.roseDk}>🟠 Mercari Japan · Live listings</Hdr>
-                {card.mercari.stats && (
-                  <div style={{ padding:"14px 16px", borderBottom:`1px solid ${C.line}`, background:hex2rgb(C.roseDk,.05) }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:12 }}>
-                      <div>
-                        <div style={{ fontSize:11, color:C.sub, marginBottom:4, letterSpacing:"0.04em", textTransform:"uppercase" }}>Median sold price</div>
-                        <div className="display" style={{ fontSize:30, fontWeight:800, color:C.roseDk, lineHeight:1 }}>{fmtTHB(card.mercari.stats.medianTHB)}</div>
-                        <div className="mono" style={{ fontSize:11.5, color:C.sub, marginTop:3 }}>
-                          {fmtJPY(card.mercari.stats.median)} · {fmtUSD(card.mercari.stats.medianUSD)}
-                        </div>
-                      </div>
-                      <div style={{ textAlign:"right" }}>
-                        <div className="mono" style={{ fontSize:13, fontWeight:600, color:C.ink }}>n = {card.mercari.stats.count}</div>
-                        <div style={{ fontSize:10.5, color:C.dim, marginTop:2 }}>
-                          Range {fmtTHB(toTHB(card.mercari.stats.min,"JPY"))}–{fmtTHB(toTHB(card.mercari.stats.max,"JPY"))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div style={{ padding:"10px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, maxHeight:360, overflowY:"auto" }}>
-                  {card.mercari.listings.slice(0,12).map((l,i)=>(
-                    <a key={i} href={l.listingUrl} target="_blank" rel="noopener noreferrer">
-                      <div style={{ background:C.deep, borderRadius:10, overflow:"hidden", border:`1px solid ${C.line}`, position:"relative" }}>
-                        {l.imageUrl && <img src={l.imageUrl} alt="" style={{ width:"100%", aspectRatio:"1/1", objectFit:"cover", display:"block" }}/>}
-                        {l.soldOut && <div style={{ position:"absolute", top:4, left:4, background:C.coral, color:"#fff", fontSize:9, fontWeight:700, padding:"2px 6px", borderRadius:5 }}>SOLD</div>}
-                        <div style={{ padding:"6px 8px" }}>
-                          <div className="display" style={{ fontSize:12.5, fontWeight:700, color:C.ink, lineHeight:1.1 }}>{fmtTHB(l.priceTHB)}</div>
-                          <div className="mono" style={{ fontSize:9.5, color:C.dim, marginTop:2 }}>{fmtJPY(l.priceJPY)}</div>
-                        </div>
-                      </div>
-                    </a>
-                  ))}
-                </div>
-                <a href={card.mercari.searchUrlSold || mercariUrl} target="_blank" rel="noopener noreferrer" style={{ display:"block", padding:"10px 14px 14px" }}>
-                  <PBtn s={{ background:C.roseDk, boxShadow:`0 6px 18px ${hex2rgb(C.roseDk,.3)}` }}>
-                    <span>🟠</span> View all on Mercari JP →
-                  </PBtn>
-                </a>
-              </Card>
-            ) : (
-              <Card className="r3" s={{ borderColor:hex2rgb(C.roseDk,.4) }}>
-                <div style={{ padding:"14px 16px" }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
-                    <span style={{ fontSize:20 }}>🟠</span>
-                    <div>
-                      <div style={{ fontSize:14, fontWeight:700 }}>Mercari Japan · Manual search</div>
-                      <div style={{ fontSize:11.5, color:C.sub }}>Live data unavailable — search directly</div>
-                    </div>
-                  </div>
-                  <div style={{ background:C.deep, borderRadius:9, padding:"8px 12px", marginBottom:12, fontSize:11, color:C.sub }} className="mono">
-                    {searchQ}
-                  </div>
-                  <a href={mercariUrl} target="_blank" rel="noopener noreferrer" style={{ display:"block" }}>
-                    <PBtn s={{ background:C.roseDk, boxShadow:`0 6px 18px ${hex2rgb(C.roseDk,.3)}` }}>
-                      <span>🟠</span> Open Mercari Japan →
-                    </PBtn>
-                  </a>
-                </div>
-              </Card>
-            )}
-
-            {/* Per-source latest */}
-            {priceData?.sources && (
-              <Card className="r4">
-                <Hdr>All sources · Latest price</Hdr>
-                {priceData.sources.map((s,i)=>{
-                  const latest = s.sales[0];
-                  if(!latest) return null;
-                  const href = s.id==="yuyutei" ? yuyutei?.sell?.url : priceData.srcLinks[s.id]?.(searchQ);
-                  return (
-                    <a key={s.id} href={href} target="_blank" rel="noopener noreferrer">
-                      <div style={{ display:"flex", alignItems:"center", gap:11, padding:"11px 16px", borderBottom:i<priceData.sources.length-1?`1px solid ${C.line}`:"none", cursor:"pointer" }}>
-                        <span style={{ fontSize:17 }}>{s.icon}</span>
-                        <div style={{ flex:1 }}>
-                          <div style={{ fontSize:13, fontWeight:600, color:s.color }}>{s.name}</div>
-                          <div style={{ fontSize:10.5, color:C.dim }} className="mono">{latest.date} · {s.cur} · {s.region}</div>
-                        </div>
-                        <div style={{ textAlign:"right" }}>
-                          <div style={{ fontSize:15, fontWeight:700 }}>{fmtTHB(latest.priceTHB)}</div>
-                          <div style={{ fontSize:10.5, color:C.dim }} className="mono">{fmtUSD(latest.priceUSD)}</div>
-                        </div>
-                      </div>
-                    </a>
-                  );
-                })}
-              </Card>
-            )}
+              </a>
+            ))}
+            <div className="r5" style={{ fontSize:11, color:C.dim, padding:"12px 4px 0", lineHeight:1.6, textAlign:"center" }}>
+              Query: <span className="mono" style={{color:C.sub}}>{card.cardId} {card.name} {rarOpt?.label}</span>
+            </div>
           </>
         )}
 
-        {/* ── SALES LIST ── */}
-        {tab==="sales" && (
-          <Card className="r1">
-            <Hdr accent={C.peachDk}>Last sold · 3 years · Newest first</Hdr>
-            <div style={{ padding:"8px 0", borderBottom:`1px solid ${C.line}` }}>
-              <div style={{ display:"flex", gap:5, overflowX:"auto", padding:"4px 12px" }}>
-                <button onClick={()=>setSrcFilter(null)} style={{ background:!srcFilter?C.peachDk:"transparent", color:!srcFilter?"#fff":C.sub, border:`1px solid ${!srcFilter?C.peachDk:C.bord}`, borderRadius:8, padding:"5px 11px", fontSize:11, fontWeight:600, whiteSpace:"nowrap", flexShrink:0, cursor:"pointer" }}>All</button>
-                {SOURCES.filter(s=>priceData?.sources?.find(ps=>ps.id===s.id)).map(s=>(
-                  <button key={s.id} onClick={()=>setSrcFilter(s.id)} style={{ background:srcFilter===s.id?s.color:"transparent", color:srcFilter===s.id?"#fff":C.sub, border:`1px solid ${srcFilter===s.id?s.color:C.bord}`, borderRadius:8, padding:"5px 11px", fontSize:11, fontWeight:600, whiteSpace:"nowrap", flexShrink:0, cursor:"pointer" }}>
-                    {s.icon} {s.name}
-                  </button>
-                ))}
-              </div>
+        {/* ── CURRENT LISTINGS tab ── */}
+        {tab === "active" && (
+          <>
+            <div className="r1" style={{ background:rgba(C.sage,0.12), border:`1px solid ${rgba(C.sageDk,0.25)}`, borderRadius:12, padding:"11px 14px", fontSize:12.5, color:C.sub, lineHeight:1.55 }}>
+              <strong style={{ color:C.ink }}>🛒 Active listings available to buy right now.</strong> Sorted by cheapest first.
             </div>
-            <div style={{ maxHeight:380, overflowY:"auto" }}>
-              {sales.length===0?(
-                <div style={{ padding:"28px", textAlign:"center", color:C.dim, fontSize:13 }}>No sales for this filter</div>
-              ):sales.map((s,i)=>(
-                <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 16px", borderBottom:i<sales.length-1?`1px solid ${C.line}`:"none" }}>
-                  <div>
-                    <div style={{ fontSize:11, color:s.sourceColor, fontWeight:600, marginBottom:2 }}>{s.icon} {s.sourceName}</div>
-                    <div style={{ fontSize:12, color:C.sub }} className="mono">{s.date}</div>
+            {activeLinks.map((link, i) => (
+              <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className={`r${Math.min(i+1, 5)}`}>
+                <Card s={{ borderColor: rgba(link.color, 0.35) }}>
+                  <div style={{ padding:"14px 16px", display:"flex", alignItems:"center", gap:12 }}>
+                    <div style={{ fontSize:26 }}>{link.icon}</div>
+                    <div style={{ flex:1 }}>
+                      <div className="display" style={{ fontSize:15, fontWeight:700, color:link.color, marginBottom:2 }}>{link.name}</div>
+                      <div style={{ fontSize:12, color:C.sub }}>{link.note}</div>
+                    </div>
+                    <div style={{ fontSize:18, color:C.dim }}>›</div>
                   </div>
-                  <div style={{ textAlign:"right" }}>
-                    <div style={{ fontSize:15, fontWeight:700 }}>{fmtTHB(s.priceTHB)}</div>
-                    <div style={{ fontSize:11, color:C.dim }} className="mono">{fmtUSD(s.priceUSD)}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
+                </Card>
+              </a>
+            ))}
+          </>
         )}
 
-        {/* ── BOBOAGRADE ── */}
-        {tab==="grade" && (
-          grade ? (
-            <>
-              {/* Grade confidence warning */}
-              {grade.imageQuality && grade.imageQuality!=="good" && (
-                <div className="r1" style={{ background:hex2rgb(C.butterDk,.12), border:`1px solid ${hex2rgb(C.butterDk,.35)}`, borderRadius:14, padding:"12px 16px", fontSize:13, color:C.ink }}>
-                  ⚠ Image quality: <strong>{grade.imageQuality}</strong> — grading accuracy may be reduced. For best results, photograph the card flat under bright, even lighting.
-                </div>
-              )}
-
-              {/* Overall grade */}
-              <Card accentColor={bgsColor(grade.overall?.bgs||0)} className="r1" s={{ borderColor:hex2rgb(bgsColor(grade.overall?.bgs||0),.5) }}>
-                <div style={{ padding:"16px 18px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:14 }}>
-                  <div>
-                    <div style={{ fontSize:10.5, color:C.sub, marginBottom:4, letterSpacing:".06em" }}>◆ BOBOAGRADE</div>
-                    <div style={{ fontSize:18, fontWeight:800, color:bgsColor(grade.overall?.bgs||0), lineHeight:1.15, marginBottom:6 }}>{grade.overall?.label||"—"}</div>
-                    <Pill ch={grade.overall?.estimatedPSA||"—"} color={bgsColor(grade.overall?.bgs||0)} s={{fontSize:11}}/>
-                    <div style={{ fontSize:12, color:C.sub, marginTop:8, maxWidth:200, lineHeight:1.55 }}>{grade.overall?.submissionAdvice}</div>
-                  </div>
-                  <div style={{ textAlign:"right", flexShrink:0 }}>
-                    <div style={{ fontSize:58, fontWeight:800, color:bgsColor(grade.overall?.bgs||0), lineHeight:.9 }}>
-                      {grade.overall?.bgs?.toFixed(1)||"—"}
-                    </div>
-                    <div style={{ fontSize:11, color:C.sub, marginTop:2 }}>/10.0</div>
-                    <div style={{ fontSize:10, color:C.dim, marginTop:2 }}>{grade.gradingConfidence}% confident</div>
-                  </div>
-                </div>
-                {grade.overall?.summary && (
-                  <div style={{ padding:"10px 18px 14px", borderTop:`1px solid ${C.line}`, fontSize:13, color:C.sub, lineHeight:1.65 }}>
-                    {grade.overall.summary}
-                  </div>
-                )}
-              </Card>
-
-              {/* Subgrades */}
-              <Card className="r2">
-                <Hdr accent={C.sageDk}>Subgrade breakdown</Hdr>
-                {[
-                  { key:"centering", label:"Centering", icon:"⊞", extra: grade.centering ? `${grade.centering.leftBorderPct||"?"}% / ${grade.centering.rightBorderPct||"?"}% sides` : "" },
-                  { key:"corners",   label:"Corners",   icon:"◤", extra: grade.corners?.worstCorner ? `Worst: ${grade.corners.worstCorner}` : "" },
-                  { key:"edges",     label:"Edges",     icon:"—", extra: grade.edges?.worstEdge ? `Worst: ${grade.edges.worstEdge}` : "" },
-                  { key:"surface",   label:"Surface",   icon:"◻", extra: grade.surface?.defectsFound?.join(", ") || "" },
-                ].map((sub,i,arr)=>{
-                  const g = grade[sub.key];
-                  if(!g) return null;
-                  const bgs = g.bgs || 0;
-                  const color = bgsColor(bgs);
-                  return (
-                    <div key={sub.key} style={{ padding:"13px 18px", borderBottom:i<arr.length-1?`1px solid ${C.line}`:"none" }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
-                        <span style={{ fontSize:14, fontWeight:600 }}>{sub.icon} {sub.label}</span>
-                        <div style={{ display:"flex", gap:8, alignItems:"baseline" }}>
-                          <span style={{ fontSize:10.5, color:C.dim }}>BGS</span>
-                          <span style={{ fontSize:22, fontWeight:700, color }}>{bgs.toFixed(1)}</span>
-                        </div>
-                      </div>
-                      <div style={{ height:5, background:C.deep, borderRadius:99, overflow:"hidden", marginBottom:6 }}>
-                        <div style={{ height:"100%", width:`${g.score||0}%`, background:color, borderRadius:99, transition:"width 1s" }}/>
-                      </div>
-                      {sub.extra && <div style={{ fontSize:11.5, color:C.butterDk, marginBottom:3, fontWeight:600 }}>{sub.extra}</div>}
-                      {g.notes && <div style={{ fontSize:11, color:C.sub, lineHeight:1.5 }}>{g.notes}</div>}
-                    </div>
-                  );
-                })}
-              </Card>
-
-              {/* Corner grid */}
-              <Card className="r3">
-                <Hdr>Corner zoom · 28% crop · 4× stitched</Hdr>
-                <div style={{ padding:"12px 16px" }}>
-                  <img src={photos.corners} alt="corners" style={{ width:"100%", borderRadius:10, border:`1px solid ${C.line}` }}/>
-                  <div style={{ marginTop:9, fontSize:12, color:C.sub, lineHeight:1.55 }}>TL · TR · BL · BR — each corner extracted from the original photo at full resolution.</div>
-                </div>
-              </Card>
-
-              {/* BGS Reference */}
-              <Card className="r4">
-                <Hdr>BGS Grade Reference</Hdr>
-                <div style={{ padding:"6px 0" }}>
-                  {[
-                    {g:"10.0",label:"PRISTINE (Black Label)",req:"All subs 10.0 — Perfect",color:C.lavDk},
-                    {g:"10",  label:"GEM MINT",             req:"All subs ≥ 9.5",          color:C.butterDk},
-                    {g:"9.5", label:"GEM MINT",             req:"All subs ≥ 9.0",          color:C.sageDk},
-                    {g:"9",   label:"MINT",                 req:"All subs ≥ 8.5",          color:C.skyDk},
-                    {g:"8.5", label:"NM-MT+",               req:"All subs ≥ 8.0",          color:C.peachDk},
-                    {g:"8",   label:"NM-MT",                req:"Light wear on edges",     color:C.coral},
-                  ].map((r,i,arr)=>(
-                    <div key={r.g} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 18px", borderBottom:i<arr.length-1?`1px solid ${C.line}`:"none" }}>
-                      <div>
-                        <span style={{ fontSize:14, fontWeight:700, color:r.color }}>BGS {r.g}</span>
-                        <span style={{ fontSize:12, color:C.sub, marginLeft:8 }}>{r.label}</span>
-                      </div>
-                      <span className="mono" style={{ fontSize:11, color:C.dim }}>{r.req}</span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            </>
-          ) : (
-            <Card className="r1">
-              <div style={{ padding:"32px 20px", textAlign:"center" }}>
-                <div style={{ fontSize:28, marginBottom:8 }}>⚠️</div>
-                <div style={{ fontSize:14, fontWeight:600, color:C.sub, marginBottom:6 }}>Grading unavailable</div>
-                <div style={{ fontSize:12, color:C.dim, lineHeight:1.6 }}>
-                  {gradeResult?.error || "The AI could not grade this image."}<br/>
-                  For best results: photograph the card flat on a plain background under bright, even light (no flash).
-                </div>
-              </div>
-            </Card>
-          )
-        )}
-
-        {/* ── INFO ── */}
-        {tab==="info" && (
+        {/* ── INFO tab ── */}
+        {tab === "info" && (
           <>
             {card.image && (
               <div className="r1" style={{ textAlign:"center" }}>
-                <img src={card.image} alt={card.name} style={{ maxWidth:220, width:"65%", borderRadius:14, boxShadow:"0 8px 28px rgba(28,27,38,.2)", margin:"0 auto", display:"block" }}/>
-                <div style={{ fontSize:11, color:C.dim, marginTop:8 }}>Official image from database</div>
+                <button onClick={() => onOpenImage({ image: card.image, label: "Official " + card.name })}
+                  style={{ background:"transparent", border:"none", padding:0, cursor:"zoom-in" }}>
+                  <img src={card.image} alt={card.name} style={{ maxWidth:220, width:"65%", borderRadius:14, boxShadow:"0 8px 28px rgba(28,27,38,.2)" }}/>
+                </button>
+                <div style={{ fontSize:11, color:C.dim, marginTop:8 }}>🔍 Official image · tap to zoom</div>
               </div>
             )}
 
@@ -1744,26 +1561,24 @@ function ResultScreen({ photos, card, aiData, user, onRescan }) {
               <Hdr>Card details</Hdr>
               <div style={{ padding:"14px 16px" }}>
                 {[
-                  ["Card ID",      card.cardId],
-                  ["Name",         card.name],
-                  ["JP Name",      card.nameJP],
-                  ["Set",          `${card.setName||""}${card.set?` · ${card.set}`:""}`],
-                  ["Rarity",       card.rarity],
-                  ["Language",     LANGUAGES.find(l=>l.id===card.language)?.label],
-                  ["Type",         card.type],
-                  ["Color",        card.color],
-                  ["Cost",         card.cost!=null?String(card.cost):null],
-                  ["Power",        card.power],
-                  ["Attribute",    card.attribute],
-                  ["Level",        card.level!=null?String(card.level):null],
-                  ["ATK / DEF",    card.atk!=null?`${card.atk} / ${card.def}`:null],
-                  ["Race",         card.race],
-                  ["Archetype",    card.archetype],
-                  ["HP",           card.hp],
-                  ["Pokémon Type", card.types?.join(", ")],
-                  ["DB Source",    card.dbSource==="api"?"✓ Live TCG API":"Local seed"],
-                  ["AI Match",     `${card.confidence}%`],
-                ].filter(([,v])=>v!=null&&v!=="").map(([k,v])=>(
+                  ["Card ID",     card.cardId],
+                  ["Name",        card.name],
+                  ["JP Name",     card.nameJP],
+                  ["Set",         card.setName ? `${card.setName}${card.set ? " · " + card.set : ""}` : card.set],
+                  ["Rarity",      `${rarOpt?.label || ""} — ${rarOpt?.full || ""}`.replace(/^ — $/, "—")],
+                  ["Language",    LANGUAGES.find(l => l.id === card.language)?.label],
+                  ["Type",        card.type],
+                  ["Color",       card.color],
+                  ["Cost",        card.cost != null ? String(card.cost) : null],
+                  ["Power",       card.power],
+                  ["Attribute",   card.attribute],
+                  ["Level",       card.level != null ? String(card.level) : null],
+                  ["ATK / DEF",   card.atk != null ? `${card.atk} / ${card.def}` : null],
+                  ["Race",        card.race],
+                  ["Archetype",   card.archetype],
+                  ["DB lookup",   card.ok ? "✓ Live API found" : "⚠ Not in DB — AI only"],
+                  ["AI Match",    `${card.confidence}%`],
+                ].filter(([,v]) => v != null && v !== "" && v !== "—").map(([k,v]) => (
                   <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.line}`, fontSize:13, gap:10 }}>
                     <span style={{ color:C.sub, flexShrink:0 }}>{k}</span>
                     <span style={{ fontWeight:600, textAlign:"right" }}>{v}</span>
@@ -1779,22 +1594,30 @@ function ResultScreen({ photos, card, aiData, user, onRescan }) {
               </Card>
             )}
 
-            {card.attacks && (
-              <Card className="r3">
-                <Hdr accent={C.butterDk}>Attacks</Hdr>
-                <div style={{ padding:"14px 16px", fontSize:13, lineHeight:1.7, color:C.ink, whiteSpace:"pre-line" }}>{card.attacks}</div>
+            {infoLinks.length > 0 && (
+              <Card className="r4">
+                <Hdr>External card pages</Hdr>
+                {infoLinks.map((l,i) => (
+                  <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer">
+                    <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 16px", borderBottom: i < infoLinks.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                      <span style={{ fontSize:18 }}>{l.icon}</span>
+                      <span style={{ flex:1, fontSize:13, fontWeight:600 }}>{l.name}</span>
+                      <span style={{ fontSize:18, color:C.dim }}>›</span>
+                    </div>
+                  </a>
+                ))}
               </Card>
             )}
 
             {card.dbSources?.length > 0 && (
-              <Card className="r4">
-                <Hdr>Databases crosschecked</Hdr>
-                {card.dbSources.map((s,i)=>(
-                  <a key={i} href={s.url&&s.url!=="#"?s.url:undefined} target="_blank" rel="noopener noreferrer">
-                    <div style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 16px", borderBottom:i<card.dbSources.length-1?`1px solid ${C.line}`:"none" }}>
+              <Card className="r5">
+                <Hdr>Data sources crosschecked</Hdr>
+                {card.dbSources.map((s,i) => (
+                  <a key={i} href={s.url && s.url !== "#" ? s.url : undefined} target="_blank" rel="noopener noreferrer">
+                    <div style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 16px", borderBottom: i < card.dbSources.length - 1 ? `1px solid ${C.line}` : "none" }}>
                       <div style={{ width:7, height:7, borderRadius:"50%", background:C.sageDk, flexShrink:0 }}/>
                       <span style={{ fontSize:13, flex:1 }}>{s.name}</span>
-                      {s.url&&s.url!=="#"&&<span style={{ color:C.dim }}>›</span>}
+                      {s.url && s.url !== "#" && <span style={{ color:C.dim }}>›</span>}
                     </div>
                   </a>
                 ))}
@@ -1802,16 +1625,42 @@ function ResultScreen({ photos, card, aiData, user, onRescan }) {
             )}
 
             <Card className="r5">
-              <Hdr>Scan output · ⬡ {user.name}</Hdr>
+              <Hdr>Captured photos · ⬡ {user.name}</Hdr>
               <div style={{ padding:"12px", display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                {[{label:"Full card",src:photos.full,aspect:"63/88"},{label:"4 corners",src:photos.corners,aspect:"1/1"}].map((p,i)=>(
-                  <div key={i} style={{ background:C.deep, borderRadius:10, overflow:"hidden", border:`1px solid ${C.line}` }}>
-                    <img src={p.src} alt={p.label} style={{ width:"100%", aspectRatio:p.aspect, objectFit:"cover", display:"block" }}/>
-                    <div style={{ padding:"6px 10px", fontSize:10.5, fontWeight:600 }}>{p.label}</div>
-                  </div>
+                {[
+                  { label:"Full card", src:photos.full,    aspect:"63/88" },
+                  { label:"4 corners", src:photos.corners, aspect:"1/1" },
+                ].map((p,i) => (
+                  <button key={i} onClick={() => onOpenImage({ image: p.src, label: p.label })}
+                    style={{ background:"transparent", border:"none", padding:0, cursor:"zoom-in", textAlign:"left" }}>
+                    <div style={{ background:C.deep, borderRadius:10, overflow:"hidden", border:`1px solid ${C.line}` }}>
+                      <img src={p.src} alt={p.label} style={{ width:"100%", aspectRatio:p.aspect, objectFit:"cover", display:"block" }}/>
+                      <div style={{ padding:"6px 10px", fontSize:10.5, fontWeight:600, display:"flex", justifyContent:"space-between" }}>
+                        <span>{p.label}</span><span style={{color:C.dim}}>🔍</span>
+                      </div>
+                    </div>
+                  </button>
                 ))}
               </div>
             </Card>
+
+            {/* Individual corner photos — tap each to zoom */}
+            {photos.cornersSeparate?.length > 0 && (
+              <Card className="r5">
+                <Hdr>Individual corners · Tap to zoom</Hdr>
+                <div style={{ padding:"12px", display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                  {photos.cornersSeparate.map((c,i) => (
+                    <button key={i} onClick={() => onOpenImage({ image: c.src, label: `Corner ${c.label}` })}
+                      style={{ background:"transparent", border:"none", padding:0, cursor:"zoom-in", textAlign:"left" }}>
+                      <div style={{ background:C.deep, borderRadius:10, overflow:"hidden", border:`1px solid ${C.line}` }}>
+                        <img src={c.src} alt={c.label} style={{ width:"100%", aspectRatio:"1/1", objectFit:"cover", display:"block" }}/>
+                        <div style={{ padding:"5px 10px", fontSize:11, fontWeight:700 }} className="mono">{c.label} 🔍</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </Card>
+            )}
           </>
         )}
       </div>
@@ -1834,23 +1683,33 @@ export default function App() {
   const [photos,  setPhotos]  = useState(null);
   const [aiData,  setAiData]  = useState(null);
   const [card,    setCard]    = useState(null);
+  const [viewer,  setViewer]  = useState(null);
 
-  const login    = useCallback(u  => { setUser(u); setScreen("welcome"); }, []);
-  const logout   = useCallback(()  => { setUser(null); setScreen("login"); }, []);
-  const start    = useCallback(c  => { setCtx(c); setScreen("capture"); }, []);
-  const captured = useCallback(p  => { setPhotos(p); setScreen("processing"); }, []);
-  const procDone = useCallback(r  => { setAiData(r); setScreen("picker"); }, []);
-  const picked   = useCallback(c  => { setCard(c); setScreen("rarity"); }, []);
-  const rarityOk = useCallback(c  => { setCard(c); setScreen("result"); }, []);
-  const rescan   = useCallback(()  => { setPhotos(null); setAiData(null); setCard(null); setScreen("capture"); }, []);
-  const backToPicker = useCallback(()=> setScreen("picker"), []);
+  const login        = useCallback(u => { setUser(u); setScreen("welcome"); }, []);
+  const logout       = useCallback(() => { setUser(null); setScreen("login"); }, []);
+  const start        = useCallback(c => { setCtx(c); setScreen("capture"); }, []);
+  const captured     = useCallback(p => { setPhotos(p); setScreen("processing"); }, []);
+  const procDone     = useCallback(r => { setAiData(r); setScreen("picker"); }, []);
+  const picked       = useCallback(c => { setCard(c); setScreen("rarity"); }, []);
+  const rarityOk     = useCallback(c => { setCard(c); setScreen("result"); }, []);
+  const rescan       = useCallback(() => { setPhotos(null); setAiData(null); setCard(null); setScreen("capture"); }, []);
+  const backToPicker = useCallback(() => setScreen("picker"), []);
+  const openImage    = useCallback(v => setViewer(v), []);
+  const closeImage   = useCallback(() => setViewer(null), []);
 
-  if (screen==="login")      return <LoginScreen onLogin={login}/>;
-  if (screen==="welcome")    return <WelcomeScreen user={user} onStart={start} onLogout={logout}/>;
-  if (screen==="capture")    return <CaptureScreen user={user} ctx={ctx} onCapture={captured} onBack={()=>setScreen("welcome")}/>;
-  if (screen==="processing") return <ProcessingScreen photos={photos} ctx={ctx} onDone={procDone}/>;
-  if (screen==="picker")     return <CardPickerScreen photos={photos} aiData={aiData} ctx={ctx} onSelect={picked} onRescan={rescan}/>;
-  if (screen==="rarity")     return <RarityScreen photos={photos} card={card} aiData={aiData} ctx={ctx} onConfirm={rarityOk} onBack={backToPicker}/>;
-  if (screen==="result")     return <ResultScreen photos={photos} card={card} aiData={aiData} user={user} onRescan={rescan}/>;
-  return null;
+  let screenNode;
+  if (screen === "login")      screenNode = <LoginScreen onLogin={login}/>;
+  else if (screen === "welcome")    screenNode = <WelcomeScreen user={user} onStart={start} onLogout={logout}/>;
+  else if (screen === "capture")    screenNode = <CaptureScreen user={user} ctx={ctx} onCapture={captured} onBack={() => setScreen("welcome")}/>;
+  else if (screen === "processing") screenNode = <ProcessingScreen photos={photos} ctx={ctx} onDone={procDone}/>;
+  else if (screen === "picker")     screenNode = <CardPickerScreen photos={photos} aiData={aiData} ctx={ctx} onSelect={picked} onRescan={rescan} onOpenImage={openImage}/>;
+  else if (screen === "rarity")     screenNode = <RarityScreen photos={photos} card={card} ctx={ctx} onConfirm={rarityOk} onBack={backToPicker} onOpenImage={openImage}/>;
+  else if (screen === "result")     screenNode = <ResultScreen photos={photos} card={card} user={user} onRescan={rescan} onOpenImage={openImage}/>;
+
+  return (
+    <>
+      {screenNode}
+      {viewer && <ImageViewer image={viewer.image} label={viewer.label} onClose={closeImage}/>}
+    </>
+  );
 }
