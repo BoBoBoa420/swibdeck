@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BoBoa-TCGScan · v4
+   BoBoa-TCGScan · v4 
    - Multi-TCG: One Piece, Yu-Gi-Oh!, Pokémon
    - Multi-language database (EN / JP / CN)
    - Pricing from multiple sources (live data via Claude AI synth, TODO: backend proxy for real scraping)
