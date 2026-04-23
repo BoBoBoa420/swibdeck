@@ -120,9 +120,69 @@ const LANGUAGES = [
 ];
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   DON!! CARD SYSTEM
+   Don!! cards are a special One Piece TCG card type (resource cards).
+   They don't have set codes like regular cards.
+   JP: ドン!! カード — Golden (黄金) is the premium version
+   EN: DON!! CARD — standard black or special variants
+═══════════════════════════════════════════════════════════════════════════ */
+const DON_VARIANTS = {
+  JP: [
+    {
+      id:"don-jp-normal",
+      label:"ドン!! カード (通常)",
+      full:"Don!! Card — Normal",
+      searchJP:"ドン!! カード",
+      searchEN:"Don Card",
+      color:C.sageDk,
+      // Illustration hint (no real thumbnail without hosting)
+      style:{ bg:"#1a1a2e", border:C.sage, text:"#fff" },
+      desc:"Standard Don!! — blue back, gold border",
+      icon:"⚡",
+    },
+    {
+      id:"don-jp-golden",
+      label:"黄金 ドン!! カード",
+      full:"Golden Don!! Card",
+      searchJP:"黄金 ドン!! カード 金",
+      searchEN:"Golden Don Card Holographic",
+      color:C.butterDk,
+      style:{ bg:"linear-gradient(135deg,#b8860b,#ffd700,#b8860b)", border:"#ffd700", text:"#000" },
+      desc:"Golden Don!! — rainbow holographic gold",
+      icon:"✨",
+    },
+  ],
+  EN: [
+    {
+      id:"don-en-normal",
+      label:"DON!! Card",
+      full:"DON!! Card — Standard",
+      searchJP:"ドン!! カード",
+      searchEN:"DON Card One Piece",
+      color:C.sageDk,
+      style:{ bg:"#1a1a2e", border:"#4a9eda", text:"#fff" },
+      desc:"Standard DON!! — black border",
+      icon:"⚡",
+    },
+    {
+      id:"don-en-special",
+      label:"DON!! Card Special",
+      full:"DON!! Card — Special Art",
+      searchJP:"ドン!! カード スペシャル",
+      searchEN:"DON Card Special Art One Piece",
+      color:C.coral,
+      style:{ bg:"linear-gradient(135deg,#8B0000,#DC143C)", border:"#FF6347", text:"#fff" },
+      desc:"Special art DON!! variant",
+      icon:"🌟",
+    },
+  ],
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
    RARITY SYSTEMS — full names, with search tokens in target language.
    searchJP = Japanese full name for searching on Mercari/Yahoo/Yuyu-tei
    searchEN = English full name for searching on eBay/TCGPlayer
+   thumb = visual style hints (since we can't host real images)
 ═══════════════════════════════════════════════════════════════════════════ */
 const RARITIES = {
   onepiece: {
@@ -202,25 +262,28 @@ const TCG_SLUG = { onepiece:"opc", yugioh:"ygo" };
    SEARCH LINK BUILDER — rarity-sensitive, uses FULL rarity name in the
    chosen language, always with card name (in chosen language) + card number.
 ═══════════════════════════════════════════════════════════════════════════ */
-function buildSearchLinks({ cardId, cardNameJP, cardNameEN, rarityOpt, tcg, language, setSlug }) {
+function buildSearchLinks({ cardId, cardNameJP, cardNameEN, rarityOpt, tcg, language, setSlug, searchOverrideJP, searchOverrideEN }) {
   const q = (s) => encodeURIComponent(s);
   const id = cardId || "";
 
-  // Name token — prefer JP for JP cards, EN for EN cards
-  const nameJP = cardNameJP || cardNameEN || "";
-  const nameEN = cardNameEN || cardNameJP || "";
-  const nameForJPSearch = nameJP || nameEN;   // JP sites search best with JP name
-  const nameForENSearch = nameEN || nameJP;   // EN sites with EN name
+  // Name token — only use REAL names (skip "Card LOCH-JP003" placeholder)
+  const isRealName = (n) => n && n !== `Card ${cardId}` && n !== cardId && n.trim().length > 0;
+  const nameJP = isRealName(cardNameJP) ? cardNameJP : "";
+  const nameEN = isRealName(cardNameEN) ? cardNameEN : "";
+  const nameForJPSearch = nameJP || nameEN;
+  const nameForENSearch = nameEN || nameJP;
 
   // Full rarity name in appropriate language
   const rarityJP = rarityOpt?.searchJP || "";
   const rarityEN = rarityOpt?.searchEN || "";
 
-  // Primary query for JP marketplaces: cardNumber + JP name + JP rarity
-  const jpQuery    = [id, nameForJPSearch, rarityJP].filter(Boolean).join(" ");
-  // Primary query for EN marketplaces: cardNumber + EN name + EN rarity
-  const enQuery    = [id, nameForENSearch, rarityEN].filter(Boolean).join(" ");
-  // Card-ID-only query (fallback — broader result set)
+  // If DON!! override provided, use that instead of normal query
+  const jpQuery = searchOverrideJP
+    ? [id, searchOverrideJP].filter(Boolean).join(" ")
+    : [id, nameForJPSearch, rarityJP].filter(Boolean).join(" ");
+  const enQuery = searchOverrideEN
+    ? [id, searchOverrideEN].filter(Boolean).join(" ")
+    : [id, nameForENSearch, rarityEN].filter(Boolean).join(" ");
   const idOnlyQuery = id;
 
   const links = [];
@@ -464,8 +527,8 @@ async function lookupCard({ cardId, tcg, language, fallbackName }) {
   return {
     ok: false,
     cardId,
-    name: fallbackName || `Card ${cardId}`,
-    nameEN: fallbackName || "",
+    name: fallbackName || `Card ${cardId}`,   // display name only
+    nameEN: fallbackName || "",                // search name — EMPTY if unknown (avoids "Card LOCH-JP003" in query)
     nameJP: "",
     setSlug: inferSetSlug(cardId, tcg),
     dbSources: [],
@@ -1389,6 +1452,31 @@ function RarityScreen({ photos, card, ctx, onConfirm, onBack, onOpenImage }) {
   const [rarity, setRarity] = useState(
     rarityList.find(r => r.id === aiRarity)?.id || rarityList[0]?.id
   );
+  // DON!! mode — special One Piece resource card
+  const [isDon, setIsDon] = useState(false);
+  const donList = ctx.tcg === "onepiece" ? (DON_VARIANTS[ctx.lang] || DON_VARIANTS.JP) : [];
+  const [donVariant, setDonVariant] = useState(donList[0]?.id || null);
+
+  const selectedRarity = rarityList.find(r => r.id === rarity);
+  const selectedDon    = donList.find(d => d.id === donVariant);
+
+  const handleConfirm = () => {
+    if (isDon) {
+      const don = selectedDon || donList[0];
+      onConfirm({
+        ...card,
+        rarity: don.id,
+        rarityLabel: don.label,
+        isDon: true,
+        donVariant: don,
+        // Mercari/eBay search using don-specific terms
+        searchOverrideJP: don.searchJP,
+        searchOverrideEN: don.searchEN,
+      });
+    } else {
+      onConfirm({ ...card, rarity });
+    }
+  };
 
   return (
     <div style={{ maxWidth:430, margin:"0 auto", background:C.bg, minHeight:"100vh" }}>
@@ -1402,6 +1490,8 @@ function RarityScreen({ photos, card, ctx, onConfirm, onBack, onOpenImage }) {
       </div>
 
       <div style={{ padding:"14px 16px 110px", display:"flex", flexDirection:"column", gap:12 }}>
+
+        {/* Card preview */}
         <div className="r1">
           <Card>
             <div style={{ padding:"14px 16px", display:"flex", gap:12, alignItems:"center" }}>
@@ -1413,56 +1503,190 @@ function RarityScreen({ photos, card, ctx, onConfirm, onBack, onOpenImage }) {
                 <div className="mono" style={{ fontSize:10, color:C.peachDk, marginBottom:4, fontWeight:600 }}>{card.cardId}</div>
                 <div className="display" style={{ fontSize:18, fontWeight:700, lineHeight:1.15, marginBottom:4 }}>{card.name}</div>
                 {card.setName && <div style={{ fontSize:12, color:C.sub, marginBottom:3 }}>{card.setName}</div>}
-                {aiRarity && <div style={{ fontSize:11, color:C.dim }}>AI suggested rarity: <strong style={{color:C.ink}}>{aiRarity}</strong></div>}
+                {aiRarity && <div style={{ fontSize:11, color:C.dim }}>AI suggested: <strong style={{color:C.ink}}>{aiRarity}</strong></div>}
               </div>
             </div>
           </Card>
         </div>
 
-        <div className="r2">
-          <Card>
-            <Hdr accent={C.lavDk}>
-              {ctx.lang === "JP" ? "Select rarity · Japanese (OCG) · Yuyu-tei naming" : "Select rarity · English (TCG)"}
-            </Hdr>
-            <div style={{ padding:"14px" }}>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                {rarityList.map(r => {
-                  const sel = rarity === r.id;
+        {/* DON!! toggle — One Piece only */}
+        {ctx.tcg === "onepiece" && (
+          <div className="r2">
+            <Card>
+              <div style={{ padding:"14px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div>
+                  <div style={{ fontSize:14, fontWeight:700, marginBottom:2 }}>
+                    {ctx.lang === "JP" ? "ドン!! カードですか？" : "Is this a DON!! Card?"}
+                  </div>
+                  <div style={{ fontSize:11.5, color:C.sub }}>
+                    {ctx.lang === "JP" ? "資源カード — セットコードなし" : "Resource card — no set code"}
+                  </div>
+                </div>
+                <button onClick={() => setIsDon(d => !d)} style={{
+                  width:50, height:28, borderRadius:99,
+                  background: isDon ? C.sageDk : C.bord,
+                  border:"none", cursor:"pointer", position:"relative",
+                  transition:"background .2s",
+                }}>
+                  <div style={{
+                    position:"absolute", top:3, left: isDon?24:3, width:22, height:22,
+                    borderRadius:"50%", background:"#fff",
+                    transition:"left .2s",
+                    boxShadow:"0 1px 4px rgba(0,0,0,0.25)",
+                  }}/>
+                </button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {/* DON!! variant picker */}
+        {isDon && donList.length > 0 && (
+          <div className="r3">
+            <Card>
+              <Hdr accent={C.sageDk}>
+                {ctx.lang === "JP" ? "DON!! バリエーション" : "DON!! Card variant"}
+              </Hdr>
+              <div style={{ padding:"14px", display:"flex", flexDirection:"column", gap:10 }}>
+                {donList.map(don => {
+                  const sel = donVariant === don.id;
                   return (
-                    <button key={r.id} onClick={() => setRarity(r.id)} style={{
-                      background: sel ? r.color : C.surf,
-                      color: sel ? "#fff" : C.ink,
-                      border: `1.5px solid ${sel ? r.color : C.bord}`,
-                      borderRadius:12, padding:"11px 10px", cursor:"pointer", textAlign:"left",
-                      boxShadow: sel ? `0 4px 14px ${rgba(r.color,.3)}` : "none",
-                      transition:"all .15s",
+                    <button key={don.id} onClick={() => setDonVariant(don.id)} style={{
+                      display:"flex", alignItems:"center", gap:12,
+                      background: sel ? rgba(don.color,.1) : C.surf,
+                      border: `2px solid ${sel ? don.color : C.bord}`,
+                      borderRadius:14, padding:"12px 14px", cursor:"pointer", textAlign:"left",
                     }}>
-                      <div className="display" style={{ fontSize:13.5, fontWeight:700, lineHeight:1.2 }}>{r.label}</div>
-                      <div style={{ fontSize:10, opacity: sel ? 0.85 : 0.55, marginTop:3 }} className="mono">
-                        {ctx.lang === "JP" ? r.searchJP : r.searchEN}
+                      {/* Stylized DON!! card thumbnail */}
+                      <div style={{
+                        width:52, height:72, borderRadius:7, flexShrink:0, overflow:"hidden",
+                        background: don.style.bg, border:`2px solid ${don.style.border}`,
+                        display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"flex-end",
+                        padding:"4px 3px",
+                        boxShadow: sel ? `0 4px 14px ${rgba(don.color,.35)}` : "0 2px 8px rgba(0,0,0,0.1)",
+                      }}>
+                        <div style={{ fontSize:16, marginBottom:2 }}>{don.icon}</div>
+                        <div style={{ fontSize:5.5, fontWeight:800, color:don.style.text, textAlign:"center", lineHeight:1.2, letterSpacing:"0.02em" }}>
+                          {ctx.lang === "JP" ? "ドン!!" : "DON!!"}
+                        </div>
+                        <div style={{ fontSize:4.5, color:don.style.text, opacity:0.7, marginTop:1, textAlign:"center" }}>+1000</div>
                       </div>
+                      <div style={{ flex:1 }}>
+                        <div className="display" style={{ fontSize:14, fontWeight:700, color: sel ? don.color : C.ink, marginBottom:3 }}>{don.label}</div>
+                        <div style={{ fontSize:11, color:C.sub, marginBottom:3 }}>{don.desc}</div>
+                        <div className="mono" style={{ fontSize:10, color:C.dim }}>
+                          Search: {ctx.lang === "JP" ? don.searchJP : don.searchEN}
+                        </div>
+                      </div>
+                      {sel && <div style={{ width:18, height:18, borderRadius:"50%", background:don.color, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                        <span style={{ color:"#fff", fontSize:10, fontWeight:700 }}>✓</span>
+                      </div>}
                     </button>
                   );
                 })}
               </div>
-              <div style={{ fontSize:11, color:C.dim, marginTop:12, lineHeight:1.5 }}>
+            </Card>
+          </div>
+        )}
+
+        {/* Standard rarity grid */}
+        {!isDon && (
+          <div className="r2">
+            <Card>
+              <Hdr accent={C.lavDk}>
                 {ctx.lang === "JP"
-                  ? "Japanese OCG rarities use the naming convention from Yuyu-tei — the leading JP TCG shop."
-                  : "English TCG rarities from official One Piece / Yu-Gi-Oh! releases."}
+                  ? "レアリティを選択 · OCG (遊々亭表記)"
+                  : "Select Rarity · TCG English"}
+              </Hdr>
+              <div style={{ padding:"14px" }}>
+                {/* Selected rarity visual preview */}
+                {selectedRarity && (
+                  <div style={{
+                    marginBottom:12,
+                    background: rgba(selectedRarity.color,.1),
+                    border:`2px solid ${selectedRarity.color}`,
+                    borderRadius:12, padding:"10px 14px",
+                    display:"flex", alignItems:"center", gap:12,
+                  }}>
+                    {/* Stylized card mockup for selected rarity */}
+                    <div style={{
+                      width:44, height:62, borderRadius:6, flexShrink:0,
+                      background: rarityCardBg(selectedRarity.id),
+                      border:`2px solid ${selectedRarity.color}`,
+                      display:"flex", flexDirection:"column", alignItems:"center",
+                      justifyContent:"flex-end", padding:"3px",
+                      boxShadow:`0 4px 14px ${rgba(selectedRarity.color,.4)}`,
+                    }}>
+                      <div className="mono" style={{ fontSize:5.5, fontWeight:700, color:rarityCardText(selectedRarity.id), textAlign:"center", lineHeight:1.3 }}>
+                        {selectedRarity.label.length > 12 ? selectedRarity.label.split(" ").slice(0,2).join(" ") : selectedRarity.label}
+                      </div>
+                    </div>
+                    <div style={{ flex:1 }}>
+                      <div className="display" style={{ fontSize:15, fontWeight:800, color:selectedRarity.color, marginBottom:2 }}>{selectedRarity.label}</div>
+                      <div className="mono" style={{ fontSize:11, color:C.sub }}>
+                        {ctx.lang === "JP" ? selectedRarity.searchJP : selectedRarity.searchEN}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7 }}>
+                  {rarityList.map(r => {
+                    const sel = rarity === r.id;
+                    return (
+                      <button key={r.id} onClick={() => setRarity(r.id)} style={{
+                        background: sel ? r.color : C.surf,
+                        color: sel ? "#fff" : C.ink,
+                        border: `1.5px solid ${sel ? r.color : C.bord}`,
+                        borderRadius:11, padding:"10px 8px", cursor:"pointer", textAlign:"left",
+                        boxShadow: sel ? `0 4px 12px ${rgba(r.color,.3)}` : "none",
+                        transition:"all .15s",
+                      }}>
+                        <div className="display" style={{ fontSize:13, fontWeight:700, lineHeight:1.2 }}>{r.label}</div>
+                        <div style={{ fontSize:9.5, opacity: sel ? 0.85 : 0.5, marginTop:2 }} className="mono">
+                          {ctx.lang === "JP" ? r.searchJP : r.searchEN}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize:11, color:C.dim, marginTop:12, lineHeight:1.5 }}>
+                  {ctx.lang === "JP"
+                    ? "日本語OCG：遊々亭の表記を使用。Overframe PSE・グランドマスターレアはLOCR/LOCH設定より。"
+                    : "English TCG rarities from official One Piece / Yu-Gi-Oh! releases."}
+                </div>
               </div>
-            </div>
-          </Card>
-        </div>
+            </Card>
+          </div>
+        )}
       </div>
 
       <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, background:"rgba(250,247,242,.96)", backdropFilter:"blur(16px)", borderTop:`1px solid ${C.bord}`, padding:"11px 16px 28px", display:"flex", gap:10 }}>
         <SBtn onClick={onBack} s={{ flex:1, padding:"12px" }}>← Back</SBtn>
-        <PBtn onClick={() => onConfirm({ ...card, rarity })} s={{ flex:2, padding:"12px", fontSize:14 }}>
-          View Prices & Listings →
+        <PBtn onClick={handleConfirm} s={{ flex:2, padding:"12px", fontSize:14 }}>
+          {isDon ? "Confirm DON!! →" : "View Prices & Listings →"}
         </PBtn>
       </div>
     </div>
   );
+}
+
+// Card background/text based on rarity type
+function rarityCardBg(id) {
+  const m = {
+    "C":"#e8e4d8","UC":"#d4e8d4","R":"#c4d8f0","SR":"#f0e4a0","SR-P":"#f0c8a0",
+    "L":"#f0a0a0","L-P":"#d0b0f0","SEC":"#f06040","SEC-P":"#c04060","SP":"#c0a0e0",
+    "MR":"#a070c0","TR":"#e8c840","PR":"#c0c0c0",
+    "N":"#e8e4d8","NP":"#d4e8d4","RP":"#b8d0e8","SR":"#f0e4a0","UR":"#f0c860",
+    "ULR":"#e8a060","SER":"#d04040","PSE":"#c03060","OFPSE":"#a02050","GMR":"#800020",
+    "20TH":"#9060c0","QCSE":"#c08020","GR":"rgba(200,230,240,0.3)","KC":"#d04080",
+    "HOL":"linear-gradient(135deg,#f0e0ff,#c0e0ff,#e0ffc0)","ORsr":"#e04020",
+  };
+  return m[id] || "#e8e4d8";
+}
+function rarityCardText(id) {
+  const dark = ["C","UC","R","SR","NP","RP","N","GR"];
+  return dark.includes(id) ? "#333" : "#fff";
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1601,9 +1825,11 @@ function ResultScreen({ photos, card, user, onRescan, onOpenImage }) {
   const links = buildSearchLinks({
     cardId: card.cardId,
     cardNameJP: card.nameJP,
-    cardNameEN: card.nameEN || card.name,
+    cardNameEN: card.nameEN || (card.name !== `Card ${card.cardId}` ? card.name : ""),
     rarityOpt: rarOpt,
     tcg: card.tcgType, language: card.language, setSlug: card.setSlug,
+    searchOverrideJP: card.searchOverrideJP,
+    searchOverrideEN: card.searchOverrideEN,
   });
   const soldLinks    = links.filter(l => l.category === "sold");
   const activeLinks  = links.filter(l => l.category === "active");
