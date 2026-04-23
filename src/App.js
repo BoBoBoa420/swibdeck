@@ -38,15 +38,16 @@ const C = {
 
 /* ── CSS ─────────────────────────────────────────────────────────────────── */
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Inter+Tight:wght@500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 html,body,#root{min-height:100%;background:${C.bg};}
-body{font-family:'Syne',sans-serif;color:${C.ink};-webkit-font-smoothing:antialiased;overscroll-behavior:none;touch-action:manipulation;font-size:15px;letter-spacing:-0.01em;}
+body{font-family:'Inter','-apple-system','Helvetica Neue',sans-serif;color:${C.ink};-webkit-font-smoothing:antialiased;overscroll-behavior:none;touch-action:manipulation;font-size:16px;letter-spacing:-0.01em;line-height:1.45;}
 ::-webkit-scrollbar{display:none;}
 a{text-decoration:none;color:inherit;}
-input,button{font-family:'Syne',sans-serif;-webkit-appearance:none;appearance:none;}
+input,button{font-family:inherit;-webkit-appearance:none;appearance:none;}
 button{cursor:pointer;}
-.mono{font-family:'JetBrains Mono',monospace;}
+.display{font-family:'Inter Tight',sans-serif;letter-spacing:-0.025em;}
+.mono{font-family:'JetBrains Mono',monospace;letter-spacing:0;}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 @keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 @keyframes scanLine{0%{top:2%}100%{top:96%}}
@@ -73,27 +74,47 @@ if (typeof window !== "undefined" && CanvasRenderingContext2D && !CanvasRenderin
    TCG CONFIG
 ═══════════════════════════════════════════════════════════════════════════ */
 const TCG_TYPES = [
-  { id:"onepiece", name:"One Piece",  emoji:"⚓", color:C.coral,
+  { id:"onepiece", name:"One Piece", shortName:"OP TCG", emoji:"⚓", color:C.coral,
     codeHint:"Card number bottom-right, e.g. OP07-051, ST30-001, EB01-023",
     codeRegion:"bottom-right",
-    codePattern:/[A-Z]{2,4}\d*-\d{3}/i,
-    dbName:"one-piece" },
-  { id:"yugioh",  name:"Yu-Gi-Oh!",  emoji:"🎴", color:C.lavDk,
+    // SVG logo placeholder — stylized card silhouette
+    logo: (color) => `
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="op-g" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="${color}" stop-opacity="1"/>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0.7"/>
+          </linearGradient>
+        </defs>
+        <circle cx="50" cy="50" r="38" fill="none" stroke="url(#op-g)" stroke-width="4"/>
+        <path d="M 35 35 Q 50 25 65 35 L 65 65 Q 50 75 35 65 Z" fill="url(#op-g)" opacity="0.9"/>
+        <circle cx="42" cy="44" r="3" fill="#fff"/>
+        <circle cx="58" cy="44" r="3" fill="#fff"/>
+        <path d="M 40 58 Q 50 64 60 58" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+        <text x="50" y="90" text-anchor="middle" font-family="Inter Tight" font-weight="800" font-size="11" fill="${color}">ONE PIECE</text>
+      </svg>` },
+  { id:"yugioh",  name:"Yu-Gi-Oh!", shortName:"YGO OCG", emoji:"🎴", color:C.lavDk,
     codeHint:"Card number bottom-left below artwork, e.g. LOCR-JP001, LOB-001",
     codeRegion:"bottom-left below artwork",
-    codePattern:/[A-Z]{2,5}-(?:JP|EN|AE)?\d{3}/i,
-    dbName:"yugioh" },
-  { id:"pokemon", name:"Pokémon",    emoji:"⚡", color:C.butterDk,
-    codeHint:"Set number bottom of card, e.g. 185/203, SV3-185",
-    codeRegion:"bottom center",
-    codePattern:/(?:SV|SWSH)?\d+-?\d+/i,
-    dbName:"pokemon" },
+    logo: (color) => `
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="ygo-g" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="${color}" stop-opacity="1"/>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0.6"/>
+          </linearGradient>
+        </defs>
+        <polygon points="50,12 86,32 86,68 50,88 14,68 14,32" fill="none" stroke="url(#ygo-g)" stroke-width="4"/>
+        <polygon points="50,24 74,38 74,62 50,76 26,62 26,38" fill="url(#ygo-g)" opacity="0.85"/>
+        <circle cx="50" cy="50" r="10" fill="#fff"/>
+        <circle cx="50" cy="50" r="4" fill="${color}"/>
+        <text x="50" y="98" text-anchor="middle" font-family="Inter Tight" font-weight="800" font-size="10" fill="${color}">遊戯王 OCG</text>
+      </svg>` },
 ];
 
 const LANGUAGES = [
-  { id:"JP", label:"Japanese", flag:"🇯🇵" },
-  { id:"EN", label:"English",  flag:"🇬🇧" },
-  { id:"CN", label:"Chinese",  flag:"🇨🇳" },
+  { id:"JP", label:"Japanese", flag:"🇯🇵", note:"OCG / JP print" },
+  { id:"EN", label:"English",  flag:"🇬🇧", note:"TCG / EN print" },
 ];
 
 const RARITIES = {
@@ -113,13 +134,6 @@ const RARITIES = {
     {id:"CR",  label:"Collector", color:C.rose},   {id:"ORsr", label:"OR",        color:C.roseDk},
     {id:"QCSR",label:"QCSR",      color:C.butterDk},
   ],
-  pokemon:[
-    {id:"C",  label:"C",          color:C.dim},    {id:"UC",  label:"UC",        color:C.sageDk},
-    {id:"R",  label:"R",          color:C.skyDk},  {id:"RH",  label:"Rare H",    color:C.butterDk},
-    {id:"RR", label:"RR",         color:C.peachDk},{id:"AR",  label:"AR",        color:C.coral},
-    {id:"SAR",label:"SAR",        color:C.lavDk},  {id:"SIR", label:"SIR",       color:C.lav},
-    {id:"HR", label:"HR",         color:C.rose},   {id:"UR",  label:"UR",        color:C.roseDk},
-  ],
 };
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -138,13 +152,9 @@ const CARD_DB = {
     rarities:{"ORsr":{buy:42000,sell:69800},"UR":{buy:42000,sell:69800}} },
   "LOB-001":    { tcg:"yugioh",   name:"Blue-Eyes White Dragon",nameJP:"青眼の白龍",       set:"LOB",   setName:"Legend of Blue Eyes",         slug:"lob",
     rarities:{"R":{buy:800,sell:1500},"UR":{buy:7500,sell:12000},"SCR":{buy:28000,sell:45000}} },
-  "SV3-185":    { tcg:"pokemon",  name:"Charizard ex",        nameJP:"リザードンex",       set:"SV3",   setName:"Obsidian Flames",             slug:"sv3",
-    rarities:{"RR":{buy:3500,sell:5500},"SIR":{buy:20000,sell:32000},"HR":{buy:12000,sell:18000}} },
-  "SV8-200":    { tcg:"pokemon",  name:"Pikachu ex",          nameJP:"ピカチュウex",       set:"SV8",   setName:"Surging Sparks",              slug:"sv8",
-    rarities:{"RR":{buy:1800,sell:2800},"SIR":{buy:14000,sell:22000}} },
 };
 
-const TCG_SLUG = { onepiece:"opc", yugioh:"ygo", pokemon:"ptcg" };
+const TCG_SLUG = { onepiece:"opc", yugioh:"ygo" };
 
 /* ═══════════════════════════════════════════════════════════════════════════
    PRICING ENGINE
@@ -379,55 +389,75 @@ Be specific about what you SEE, not what you assume. If image quality prevents a
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   REAL CARD LOOKUP — Calls /api/cardlookup → apitcg.com + ygoprodeck.com
+   REAL CARD LOOKUP — Calls /api/cardlookup → Mercari + TCG databases
 ═══════════════════════════════════════════════════════════════════════════ */
-async function lookupCardFromAPIs(cardId, tcgType) {
+async function lookupCardFromAPIs(cardId, tcgType, language, fallbackName) {
   const seed = CARD_DB[cardId];
   try {
     const res = await fetch(
-      `/api/cardlookup?id=${encodeURIComponent(cardId)}&tcg=${tcgType}`,
-      { signal: AbortSignal.timeout(8000) }
+      `/api/cardlookup?id=${encodeURIComponent(cardId)}&tcg=${tcgType}&lang=${language}`,
+      { signal: AbortSignal.timeout(12000) }
     );
     if (!res.ok) throw new Error(res.status);
     const data = await res.json();
-    if (data.found) {
+
+    // Even if DB didn't find, Mercari might have listings — still useful
+    const hasMercari = data.mercari?.listings?.length > 0;
+    const dbFound = data.found && data.name && data.name !== "Unknown";
+
+    if (dbFound || hasMercari) {
       return {
-        source:"api", found:true, cardId: data.cardId||cardId,
-        name:data.name||seed?.name||"Unknown",
-        nameJP:data.nameJP||seed?.nameJP||"",
-        set:data.set||seed?.set||"",
-        setName:data.setName||seed?.setName||"",
-        rarity:data.rarity||(seed?.rarities&&Object.keys(seed.rarities)[0])||"",
-        type:data.type||seed?.type||"",
-        color:data.color||seed?.color||"",
-        cost:data.cost??seed?.cost??null,
-        power:data.power||seed?.power||null,
-        ability:data.ability||seed?.ability||"",
-        image:data.image||null,
+        source:"api",
+        found:true,
+        cardId: data.cardId || cardId,
+        name:    dbFound ? data.name : (fallbackName || seed?.name || `Card ${cardId}`),
+        nameJP:  data.nameJP || seed?.nameJP || "",
+        set:     data.set || seed?.set || "",
+        setName: data.setName || seed?.setName || "",
+        rarity:  data.rarity || (seed?.rarities && Object.keys(seed.rarities)[0]) || "",
+        type:    data.type || seed?.type || "",
+        color:   data.color || seed?.color || "",
+        cost:    data.cost ?? seed?.cost ?? null,
+        power:   data.power || seed?.power || null,
+        ability: data.ability || seed?.ability || "",
+        image:   data.image || null,
         atk:data.atk, def:data.def, level:data.level,
         attribute:data.attribute, race:data.race, archetype:data.archetype,
-        hp:data.hp, types:data.types, attacks:data.attacks,
-        dbSources:data.sources||[],
-        prices:seed?.rarities||null,
-        yuyuteiSlug:seed?.slug||null,
+        dbSources: data.sources || [],
+        mercari: data.mercari || null,
+        prices: seed?.rarities || null,
+        yuyuteiSlug: seed?.slug || null,
       };
     }
-  } catch(e) { /* fall through to seed */ }
+  } catch(e) {
+    console.warn("cardlookup failed:", e.message);
+  }
 
+  // Fallback to seed DB
   if (seed) {
     return {
       source:"seed", found:true, cardId,
-      name:seed.name, nameJP:seed.nameJP||"",
-      set:seed.set, setName:seed.setName,
-      rarity:Object.keys(seed.rarities||{})[0]||"",
-      type:seed.type||"", color:seed.color||"",
-      cost:seed.cost??null, power:seed.power||null,
-      ability:seed.ability||"", image:null,
-      prices:seed.rarities, yuyuteiSlug:seed.slug||null,
-      dbSources:[{name:"Local Seed DB",url:"#"}],
+      name: seed.name, nameJP: seed.nameJP || "",
+      set: seed.set, setName: seed.setName,
+      rarity: Object.keys(seed.rarities || {})[0] || "",
+      type: seed.type || "", color: seed.color || "",
+      cost: seed.cost ?? null, power: seed.power || null,
+      ability: seed.ability || "", image: null,
+      prices: seed.rarities, yuyuteiSlug: seed.slug || null,
+      dbSources: [{ name:"Local Seed DB", url:"#" }],
+      mercari: null,
     };
   }
-  return { source:"none", found:false, cardId, name:"Unknown" };
+
+  // Last resort — use AI-extracted name if available
+  return {
+    source:"none",
+    found: !!fallbackName,
+    cardId,
+    name: fallbackName || `Card ${cardId}`,
+    dbSources: [],
+    mercari: null,
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -692,35 +722,59 @@ function WelcomeScreen({ user, onStart, onLogout }) {
           <div style={{ fontSize:13.5, color:C.sub, lineHeight:1.6 }}>BoBoa AI identifies the card, grades the condition, and pulls prices from 7 sources in THB · USD · JPY.</div>
         </div>
 
-        <div className="r3" style={{ marginBottom:18 }}>
-          <div style={{ fontSize:10.5, fontWeight:700, color:C.sub, marginBottom:8, letterSpacing:"0.1em", textTransform:"uppercase" }}>Step 1 · Choose TCG</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+        <div className="r3" style={{ marginBottom:22 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.sub, marginBottom:10, letterSpacing:"0.1em", textTransform:"uppercase" }}>Step 1 · Choose TCG</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
             {TCG_TYPES.map(t=>{
               const sel=tcg===t.id;
-              return <button key={t.id} onClick={()=>setTcg(t.id)} style={{ background:sel?t.color:C.surf, color:sel?"#fff":C.ink, border:`1.5px solid ${sel?t.color:C.bord}`, borderRadius:14, padding:"14px 8px", cursor:"pointer", textAlign:"center", boxShadow:sel?`0 6px 16px ${hex2rgb(t.color,.3)}`:"none", transition:"all .15s" }}>
-                <div style={{ fontSize:24, marginBottom:4 }}>{t.emoji}</div>
-                <div style={{ fontSize:12, fontWeight:700 }}>{t.name}</div>
-              </button>;
+              const logoColor = sel ? "#fff" : t.color;
+              return (
+                <button key={t.id} onClick={()=>setTcg(t.id)} style={{
+                  background:sel?t.color:C.surf,
+                  color:sel?"#fff":C.ink,
+                  border:`2px solid ${sel?t.color:C.bord}`,
+                  borderRadius:18, padding:"18px 12px 14px",
+                  cursor:"pointer", textAlign:"center",
+                  boxShadow:sel?`0 8px 22px ${hex2rgb(t.color,.32)}`:"0 2px 8px rgba(28,27,38,0.04)",
+                  transition:"all .18s",
+                  display:"flex", flexDirection:"column", alignItems:"center", gap:8,
+                }}>
+                  <div style={{ width:76, height:76 }} dangerouslySetInnerHTML={{__html: t.logo(logoColor)}}/>
+                  <div className="display" style={{ fontSize:16, fontWeight:800, letterSpacing:"-0.02em" }}>{t.name}</div>
+                  <div style={{ fontSize:10.5, fontWeight:500, opacity:sel?0.9:0.55, letterSpacing:"0.04em", textTransform:"uppercase" }}>{t.shortName}</div>
+                </button>
+              );
             })}
           </div>
         </div>
 
-        <div className="r3" style={{ marginBottom:24 }}>
-          <div style={{ fontSize:10.5, fontWeight:700, color:C.sub, marginBottom:8, letterSpacing:"0.1em", textTransform:"uppercase" }}>Step 2 · Card language</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+        <div className="r3" style={{ marginBottom:26 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.sub, marginBottom:10, letterSpacing:"0.1em", textTransform:"uppercase" }}>Step 2 · Card language</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
             {LANGUAGES.map(l=>{
               const sel=lang===l.id;
-              return <button key={l.id} onClick={()=>setLang(l.id)} style={{ background:sel?C.ink:C.surf, color:sel?"#fff":C.ink, border:`1.5px solid ${sel?C.ink:C.bord}`, borderRadius:13, padding:"11px 6px", cursor:"pointer", textAlign:"center" }}>
-                <div style={{ fontSize:22, marginBottom:3 }}>{l.flag}</div>
-                <div style={{ fontSize:12, fontWeight:600 }}>{l.label}</div>
-              </button>;
+              return (
+                <button key={l.id} onClick={()=>setLang(l.id)} style={{
+                  background:sel?C.ink:C.surf,
+                  color:sel?"#fff":C.ink,
+                  border:`2px solid ${sel?C.ink:C.bord}`,
+                  borderRadius:14, padding:"14px 10px",
+                  cursor:"pointer", textAlign:"center",
+                  boxShadow:sel?`0 6px 18px rgba(28,27,38,0.2)`:"0 2px 8px rgba(28,27,38,0.04)",
+                  transition:"all .18s",
+                }}>
+                  <div style={{ fontSize:30, marginBottom:6 }}>{l.flag}</div>
+                  <div className="display" style={{ fontSize:15, fontWeight:700, marginBottom:2 }}>{l.label}</div>
+                  <div style={{ fontSize:10.5, opacity:sel?0.75:0.55 }}>{l.note}</div>
+                </button>
+              );
             })}
           </div>
         </div>
 
         <div className="r4">
-          <PBtn onClick={()=>onStart({tcg,lang})} s={{ padding:"15px 20px", fontSize:15.5 }}>
-            <span style={{ fontSize:18 }}>📷</span> Scan or Upload a Card
+          <PBtn onClick={()=>onStart({tcg,lang})} s={{ padding:"16px 20px", fontSize:16 }}>
+            <span style={{ fontSize:19 }}>📷</span> Scan or Upload a Card
           </PBtn>
           <div style={{ textAlign:"center", marginTop:10, fontSize:11, color:C.dim }}>
             Watermark: <span className="mono" style={{ color:C.sub }}>{user.name} · {new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace(/ /g,"-")}</span>
@@ -1044,14 +1098,16 @@ function CardPickerScreen({ photos, aiData, ctx, onSelect, onRescan }) {
     if(!cardId) return;
 
     setLookingUp(true);
-    const dbResult = await lookupCardFromAPIs(cardId, ctx.tcg);
+    const aiCard = candidates.find(c=>c.cardId===cardId);
+    // Use AI's extracted name as fallback — fixes "Unknown" bug
+    const fallbackName = aiCard?.name || candidates[0]?.name || "";
+    const dbResult = await lookupCardFromAPIs(cardId, ctx.tcg, ctx.lang, fallbackName);
     setLookingUp(false);
 
-    const aiCard = candidates.find(c=>c.cardId===cardId);
     onSelect({
       cardId,
       tcgType: ctx.tcg,
-      name:      dbResult.name    || aiCard?.name    || "Unknown",
+      name:      dbResult.name    || fallbackName || "Unknown",
       nameJP:    dbResult.nameJP  || aiCard?.nameOriginal || "",
       set:       dbResult.set     || aiCard?.set      || "",
       setName:   dbResult.setName || aiCard?.setName  || "",
@@ -1063,17 +1119,16 @@ function CardPickerScreen({ photos, aiData, ctx, onSelect, onRescan }) {
       ability:   dbResult.ability || "",
       image:     dbResult.image   || null,
       language:  idResult?.data?.language || ctx.lang,
-      confidence:aiCard?.confidence || (dbResult.found?80:30),
+      confidence:aiCard?.confidence || (dbResult.found?70:30),
       evidence:  aiCard?.evidence  || "",
       inDB:      dbResult.found,
       dbSource:  dbResult.source,
       dbSources: dbResult.dbSources || [],
+      mercari:   dbResult.mercari  || null,
       prices:    dbResult.prices   || null,
       yuyuteiSlug:dbResult.yuyuteiSlug||null,
-      // TCG-specific fields
       atk:dbResult.atk, def:dbResult.def, level:dbResult.level,
       attribute:dbResult.attribute, race:dbResult.race, archetype:dbResult.archetype,
-      hp:dbResult.hp, types:dbResult.types, attacks:dbResult.attacks,
     });
   };
 
@@ -1326,20 +1381,22 @@ function ResultScreen({ photos, card, aiData, user, onRescan }) {
         </div>
 
         {/* Quick stats */}
-        <div style={{ display:"flex", gap:5, marginBottom:10 }}>
-          <div style={{ flex:1, background:C.deep, borderRadius:10, padding:"8px 4px", textAlign:"center" }}>
-            <div style={{ fontSize:9.5, color:C.sub, marginBottom:2 }}>BoBoa Match</div>
-            <div style={{ fontSize:14, fontWeight:700, color:card.confidence>=85?C.sageDk:C.butterDk }}>{card.confidence}%</div>
+        <div style={{ display:"flex", gap:6, marginBottom:10 }}>
+          <div style={{ flex:1, background:C.deep, borderRadius:10, padding:"9px 5px", textAlign:"center" }}>
+            <div style={{ fontSize:10, color:C.sub, marginBottom:2 }}>BoBoa Match</div>
+            <div className="display" style={{ fontSize:15, fontWeight:800, color:card.confidence>=85?C.sageDk:C.butterDk }}>{card.confidence}%</div>
           </div>
-          <div style={{ flex:1, background:C.deep, borderRadius:10, padding:"8px 4px", textAlign:"center" }}>
-            <div style={{ fontSize:9.5, color:C.sub, marginBottom:2 }}>DB Match</div>
-            <div style={{ fontSize:14, fontWeight:700, color:card.dbSource==="api"?C.sageDk:C.butterDk }}>
+          <div style={{ flex:1, background:C.deep, borderRadius:10, padding:"9px 5px", textAlign:"center" }}>
+            <div style={{ fontSize:10, color:C.sub, marginBottom:2 }}>DB Match</div>
+            <div className="display" style={{ fontSize:14, fontWeight:800, color:card.dbSource==="api"?C.sageDk:C.butterDk }}>
               {card.dbSource==="api"?"✓ Live":card.dbSource==="seed"?"Seed":"—"}
             </div>
           </div>
-          <div style={{ flex:1.3, background:hex2rgb(C.coral,.1), border:`1px solid ${hex2rgb(C.coral,.25)}`, borderRadius:10, padding:"8px 4px", textAlign:"center" }}>
-            <div style={{ fontSize:9.5, color:C.coral, marginBottom:2, fontWeight:600 }}>🏯 Buy-back</div>
-            <div style={{ fontSize:13, fontWeight:700, color:C.coral }}>{yuyutei?fmtTHB(yuyutei.buy.thb):"—"}</div>
+          <div style={{ flex:1.4, background:hex2rgb(C.roseDk,.1), border:`1px solid ${hex2rgb(C.roseDk,.25)}`, borderRadius:10, padding:"9px 5px", textAlign:"center" }}>
+            <div style={{ fontSize:10, color:C.roseDk, marginBottom:2, fontWeight:700 }}>🟠 Mercari Med.</div>
+            <div className="display" style={{ fontSize:14, fontWeight:800, color:C.roseDk }}>
+              {card.mercari?.stats?.medianTHB ? fmtTHB(card.mercari.stats.medianTHB) : (yuyutei ? fmtTHB(yuyutei.buy.thb) : "—")}
+            </div>
           </div>
         </div>
 
@@ -1394,38 +1451,109 @@ function ResultScreen({ photos, card, aiData, user, onRescan }) {
               </Card>
             )}
 
-            {priceData?.chart?.length>0 && (
-              <Card className="r2">
-                <Hdr accent={C.peachDk}>Price history · Multi-source</Hdr>
-                <div style={{ padding:"14px 0 10px" }}>
-                  <PriceChart chart={priceData.chart} color={C.peachDk} timeframe={tf} onTF={setTf}/>
+            {/* Chart — prefer Mercari real data, fall back to seed chart */}
+            {(() => {
+              // Build chart from Mercari listings if we have them
+              let chartData = null;
+              let chartSource = "";
+              if (card.mercari?.listings?.length >= 5) {
+                // Group by month from listing creation or current month if unknown
+                const byMonth = new Map();
+                card.mercari.listings.forEach(l => {
+                  const date = l.createdAt ? new Date(l.createdAt) : new Date();
+                  const ym = date.toISOString().slice(0,7);
+                  if (!byMonth.has(ym)) byMonth.set(ym, []);
+                  byMonth.get(ym).push(l.priceTHB);
+                });
+                chartData = [...byMonth.entries()]
+                  .sort((a,b)=>a[0].localeCompare(b[0]))
+                  .map(([month, prices]) => ({
+                    month,
+                    avg: Math.round(prices.reduce((a,b)=>a+b,0)/prices.length),
+                    min: Math.min(...prices), max: Math.max(...prices),
+                    n: prices.length,
+                  }));
+                chartSource = "Mercari JP · Real listings";
+              } else if (priceData?.chart?.length > 0) {
+                chartData = priceData.chart;
+                chartSource = "Seed data";
+              }
+
+              if (!chartData || chartData.length < 2) return null;
+              return (
+                <Card className="r2">
+                  <Hdr accent={C.peachDk}>Price chart · {chartSource}</Hdr>
+                  <div style={{ padding:"14px 0 10px" }}>
+                    <PriceChart chart={chartData} color={C.peachDk} timeframe={tf} onTF={setTf}/>
+                  </div>
+                </Card>
+              );
+            })()}
+
+            {/* Mercari JP live listings — real data */}
+            {card.mercari?.listings?.length > 0 ? (
+              <Card className="r3" s={{ borderColor:hex2rgb(C.roseDk,.4) }}>
+                <Hdr accent={C.roseDk}>🟠 Mercari Japan · Live listings</Hdr>
+                {card.mercari.stats && (
+                  <div style={{ padding:"14px 16px", borderBottom:`1px solid ${C.line}`, background:hex2rgb(C.roseDk,.05) }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:12 }}>
+                      <div>
+                        <div style={{ fontSize:11, color:C.sub, marginBottom:4, letterSpacing:"0.04em", textTransform:"uppercase" }}>Median sold price</div>
+                        <div className="display" style={{ fontSize:30, fontWeight:800, color:C.roseDk, lineHeight:1 }}>{fmtTHB(card.mercari.stats.medianTHB)}</div>
+                        <div className="mono" style={{ fontSize:11.5, color:C.sub, marginTop:3 }}>
+                          {fmtJPY(card.mercari.stats.median)} · {fmtUSD(card.mercari.stats.medianUSD)}
+                        </div>
+                      </div>
+                      <div style={{ textAlign:"right" }}>
+                        <div className="mono" style={{ fontSize:13, fontWeight:600, color:C.ink }}>n = {card.mercari.stats.count}</div>
+                        <div style={{ fontSize:10.5, color:C.dim, marginTop:2 }}>
+                          Range {fmtTHB(toTHB(card.mercari.stats.min,"JPY"))}–{fmtTHB(toTHB(card.mercari.stats.max,"JPY"))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div style={{ padding:"10px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, maxHeight:360, overflowY:"auto" }}>
+                  {card.mercari.listings.slice(0,12).map((l,i)=>(
+                    <a key={i} href={l.listingUrl} target="_blank" rel="noopener noreferrer">
+                      <div style={{ background:C.deep, borderRadius:10, overflow:"hidden", border:`1px solid ${C.line}`, position:"relative" }}>
+                        {l.imageUrl && <img src={l.imageUrl} alt="" style={{ width:"100%", aspectRatio:"1/1", objectFit:"cover", display:"block" }}/>}
+                        {l.soldOut && <div style={{ position:"absolute", top:4, left:4, background:C.coral, color:"#fff", fontSize:9, fontWeight:700, padding:"2px 6px", borderRadius:5 }}>SOLD</div>}
+                        <div style={{ padding:"6px 8px" }}>
+                          <div className="display" style={{ fontSize:12.5, fontWeight:700, color:C.ink, lineHeight:1.1 }}>{fmtTHB(l.priceTHB)}</div>
+                          <div className="mono" style={{ fontSize:9.5, color:C.dim, marginTop:2 }}>{fmtJPY(l.priceJPY)}</div>
+                        </div>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+                <a href={card.mercari.searchUrlSold || mercariUrl} target="_blank" rel="noopener noreferrer" style={{ display:"block", padding:"10px 14px 14px" }}>
+                  <PBtn s={{ background:C.roseDk, boxShadow:`0 6px 18px ${hex2rgb(C.roseDk,.3)}` }}>
+                    <span>🟠</span> View all on Mercari JP →
+                  </PBtn>
+                </a>
+              </Card>
+            ) : (
+              <Card className="r3" s={{ borderColor:hex2rgb(C.roseDk,.4) }}>
+                <div style={{ padding:"14px 16px" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+                    <span style={{ fontSize:20 }}>🟠</span>
+                    <div>
+                      <div style={{ fontSize:14, fontWeight:700 }}>Mercari Japan · Manual search</div>
+                      <div style={{ fontSize:11.5, color:C.sub }}>Live data unavailable — search directly</div>
+                    </div>
+                  </div>
+                  <div style={{ background:C.deep, borderRadius:9, padding:"8px 12px", marginBottom:12, fontSize:11, color:C.sub }} className="mono">
+                    {searchQ}
+                  </div>
+                  <a href={mercariUrl} target="_blank" rel="noopener noreferrer" style={{ display:"block" }}>
+                    <PBtn s={{ background:C.roseDk, boxShadow:`0 6px 18px ${hex2rgb(C.roseDk,.3)}` }}>
+                      <span>🟠</span> Open Mercari Japan →
+                    </PBtn>
+                  </a>
                 </div>
               </Card>
             )}
-
-            {/* Mercari JP deep link */}
-            <Card className="r3" s={{ borderColor:hex2rgb(C.roseDk,.4) }}>
-              <div style={{ padding:"14px 16px" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
-                  <span style={{ fontSize:20 }}>🟠</span>
-                  <div>
-                    <div style={{ fontSize:14, fontWeight:700 }}>Mercari Japan · Image search</div>
-                    <div style={{ fontSize:11.5, color:C.sub }}>Tap to search listings that match your card photo</div>
-                  </div>
-                </div>
-                <div style={{ background:C.deep, borderRadius:9, padding:"8px 12px", marginBottom:12, fontSize:11, color:C.sub }} className="mono">
-                  {searchQ}
-                </div>
-                <a href={mercariUrl} target="_blank" rel="noopener noreferrer" style={{ display:"block" }}>
-                  <PBtn s={{ background:C.roseDk, boxShadow:`0 6px 18px ${hex2rgb(C.roseDk,.3)}` }}>
-                    <span>🟠</span> Open Mercari Japan →
-                  </PBtn>
-                </a>
-                <div style={{ fontSize:11, color:C.dim, marginTop:8, textAlign:"center" }}>
-                  Opens in browser — search then compare listing photos with yours
-                </div>
-              </div>
-            </Card>
 
             {/* Per-source latest */}
             {priceData?.sources && (
