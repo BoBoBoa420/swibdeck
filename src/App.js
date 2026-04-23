@@ -1,985 +1,520 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BoBoa-TCGScan · v4 
-   - Multi-TCG: One Piece, Yu-Gi-Oh!, Pokémon
-   - Multi-language database (EN / JP / CN)
-   - Pricing from multiple sources (live data via Claude AI synth, TODO: backend proxy for real scraping)
-   - Interactive, tappable price charts with zoom
-   - Rarity picker adapts to TCG type
-   - Frame-matched capture (what you see is what you crop)
+   BoBoa Scanner · v6
+   - Max quality camera (4K constraints, 1x zoom, no downsampling)
+   - Photo OR Upload mode
+   - AI returns ranked candidate list → user picks card number
+   - Deep BGS-style AI grading from photo evidence
+   - Yuyu-tei buyback as price anchor
+   - Multi-source pricing (eBay, Mercari JP, Rakuten, TCGPlayer, PriceCharting)
+   - Mercari JP image-search deep link
 ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Currency conversion ──────────────────────────────────────────────────── */
-const FX = { USD_TO_THB: 35, JPY_TO_THB: 0.24, JPY_TO_USD: 0.0068 };
+/* ── Currency ────────────────────────────────────────────────────────────── */
+const FX = { USD_THB: 35, JPY_THB: 0.24, JPY_USD: 0.0068 };
+const toTHB = (n, cur) => Math.round(!n ? 0 : cur === "JPY" ? n * FX.JPY_THB : cur === "USD" ? n * FX.USD_THB : n);
+const toUSD = (n, cur) => !n ? 0 : cur === "JPY" ? Math.round(n * FX.JPY_USD * 100) / 100 : cur === "THB" ? Math.round(n / FX.USD_THB * 100) / 100 : n;
 const fmtTHB = n => "฿" + Math.round(n || 0).toLocaleString();
-const fmtUSD = n => "$" + (Number(n || 0).toFixed(Number(n) % 1 === 0 ? 0 : 2));
+const fmtUSD = n => "$" + (Number(n || 0) % 1 === 0 ? Number(n).toFixed(0) : Number(n).toFixed(2));
 const fmtJPY = n => "¥" + Math.round(n || 0).toLocaleString();
+const hex2rgb = (h, a) => { const r = parseInt(h.slice(1,3),16), g = parseInt(h.slice(3,5),16), b = parseInt(h.slice(5,7),16); return `rgba(${r},${g},${b},${a})`; };
 
-// Any source currency → THB
-const toTHB = (amount, currency) => {
-  if (!amount) return 0;
-  if (currency === "THB") return Math.round(amount);
-  if (currency === "USD") return Math.round(amount * FX.USD_TO_THB);
-  if (currency === "JPY") return Math.round(amount * FX.JPY_TO_THB);
-  return Math.round(amount);
-};
-const toUSD = (amount, currency) => {
-  if (!amount) return 0;
-  if (currency === "USD") return Number(amount);
-  if (currency === "THB") return Number((amount / FX.USD_TO_THB).toFixed(2));
-  if (currency === "JPY") return Number((amount * FX.JPY_TO_USD).toFixed(2));
-  return 0;
-};
-
-/* ── Palette — modern pastel ──────────────────────────────────────────────── */
-const P = {
-  bg: "#FAF7F2", bgDeep: "#F3EDE2", surface: "#FFFFFF",
-  ink: "#1F1E2A", sub: "#6C6B7A", dim: "#A4A2B3",
-  line: "#EDE6D7", border: "#DFD5C3",
-  peach: "#F2A488", peachDp: "#E88A68",
-  sage: "#8FB89A", sageDp: "#6FA17E",
-  sky: "#A9C5E8", skyDp: "#7FA6D1",
-  rose: "#E9AFC0", roseDp: "#D78BA3",
-  butter: "#F2D79E", butterDp: "#E6C37D",
-  lavender: "#BFB0DB", lavDp: "#9C87C5",
-  coral: "#E68A7A",
-  inkDark: "#18161F",
+/* ── Palette ─────────────────────────────────────────────────────────────── */
+const C = {
+  bg:"#FAF7F2", deep:"#F2EAD8", surf:"#FFFFFF",
+  ink:"#1C1B26", sub:"#68677A", dim:"#A8A6B8", line:"#EAE2D0", bord:"#DDD4BE",
+  peach:"#F09E7A", peachDk:"#DC7D52",
+  sage:"#7DAF8A", sageDk:"#5A9168",
+  sky:"#7BAED4", skyDk:"#5490BC",
+  butter:"#E8C96A", butterDk:"#D4AD40",
+  lav:"#A899CC", lavDk:"#8A7ABF",
+  rose:"#D98AA0", roseDk:"#C06882",
+  coral:"#E07060",
+  dark:"#16141E",
 };
 
-const toRgba = (hex, a) => {
-  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-  return `rgba(${r},${g},${b},${a})`;
-};
-
-/* ── Fonts: Onest (display) + Inter Tight (body) + JetBrains Mono ────────── */
+/* ── CSS ─────────────────────────────────────────────────────────────────── */
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
-html,body,#root{min-height:100%;background:${P.bg};}
-body{
-  font-family:'Inter Tight','-apple-system',sans-serif;
-  color:${P.ink};
-  -webkit-font-smoothing:antialiased;
-  overscroll-behavior:none;
-  touch-action:manipulation;
-  font-size:15px;
-  letter-spacing:-0.005em;
-}
+html,body,#root{min-height:100%;background:${C.bg};}
+body{font-family:'DM Sans',sans-serif;color:${C.ink};-webkit-font-smoothing:antialiased;overscroll-behavior:none;touch-action:manipulation;font-size:15px;}
 ::-webkit-scrollbar{display:none;}
 a{text-decoration:none;color:inherit;}
-input,button,select{font-family:inherit;-webkit-appearance:none;appearance:none;}
+input,button{font-family:'DM Sans',sans-serif;-webkit-appearance:none;appearance:none;}
 button{cursor:pointer;}
-.display{font-family:'Onest',sans-serif;letter-spacing:-0.025em;}
+.syne{font-family:'Syne',sans-serif;letter-spacing:-0.02em;}
 .mono{font-family:'JetBrains Mono',monospace;}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-@keyframes fu{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 @keyframes scanLine{0%{top:2%}100%{top:96%}}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.55}}
-.fu1{animation:fu 0.45s 0.00s cubic-bezier(0.2,0.8,0.2,1) both;}
-.fu2{animation:fu 0.45s 0.08s cubic-bezier(0.2,0.8,0.2,1) both;}
-.fu3{animation:fu 0.45s 0.16s cubic-bezier(0.2,0.8,0.2,1) both;}
-.fu4{animation:fu 0.45s 0.24s cubic-bezier(0.2,0.8,0.2,1) both;}
-.fu5{animation:fu 0.45s 0.32s cubic-bezier(0.2,0.8,0.2,1) both;}
+@keyframes ping{0%{transform:scale(1);opacity:0.8}100%{transform:scale(1.8);opacity:0}}
+.r1{animation:rise .42s .00s cubic-bezier(.2,.8,.2,1) both}
+.r2{animation:rise .42s .07s cubic-bezier(.2,.8,.2,1) both}
+.r3{animation:rise .42s .14s cubic-bezier(.2,.8,.2,1) both}
+.r4{animation:rise .42s .21s cubic-bezier(.2,.8,.2,1) both}
+.r5{animation:rise .42s .28s cubic-bezier(.2,.8,.2,1) both}
 `;
 
-// roundRect polyfill for older Safari
+// roundRect polyfill
 if (typeof window !== "undefined" && CanvasRenderingContext2D && !CanvasRenderingContext2D.prototype.roundRect) {
-  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
-    if (typeof r === "number") r = [r, r, r, r];
-    this.beginPath();
-    this.moveTo(x + r[0], y);
-    this.lineTo(x + w - r[1], y);
-    this.quadraticCurveTo(x + w, y, x + w, y + r[1]);
-    this.lineTo(x + w, y + h - r[2]);
-    this.quadraticCurveTo(x + w, y + h, x + w - r[2], y + h);
-    this.lineTo(x + r[3], y + h);
-    this.quadraticCurveTo(x, y + h, x, y + h - r[3]);
-    this.lineTo(x, y + r[0]);
-    this.quadraticCurveTo(x, y, x + r[0], y);
-    this.closePath();
-    return this;
+  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
+    if(typeof r==="number")r=[r,r,r,r];
+    this.beginPath();this.moveTo(x+r[0],y);this.lineTo(x+w-r[1],y);
+    this.quadraticCurveTo(x+w,y,x+w,y+r[1]);this.lineTo(x+w,y+h-r[2]);
+    this.quadraticCurveTo(x+w,y+h,x+w-r[2],y+h);this.lineTo(x+r[3],y+h);
+    this.quadraticCurveTo(x,y+h,x,y+h-r[3]);this.lineTo(x,y+r[0]);
+    this.quadraticCurveTo(x,y,x+r[0],y);this.closePath();return this;
   };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   TCG TYPES + RARITY SETS
+   TCG CONFIG
 ═══════════════════════════════════════════════════════════════════════════ */
 const TCG_TYPES = [
-  { id: "onepiece", name: "One Piece",  emoji: "⚓", color: P.coral,
-    idHint: "Bottom-right. Format like OP07-051, ST17-004, EB01-023" },
-  { id: "yugioh",   name: "Yu-Gi-Oh!",  emoji: "🎴", color: P.lavDp,
-    idHint: "Bottom-left. Format like LOB-001, MVP1-ENG01, RA03-JP000" },
-  { id: "pokemon",  name: "Pokémon",     emoji: "⚡", color: P.butterDp,
-    idHint: "Bottom of card. Format like 185/203, SV3-185, SWSH12-160" },
+  { id:"onepiece", name:"One Piece",  emoji:"⚓", color:C.coral,
+    codeHint:"Bottom-right, e.g. OP07-051, ST30-001, EB01-023",
+    codePattern:/[A-Z]{2,4}\d*-\d{3}/i },
+  { id:"yugioh",  name:"Yu-Gi-Oh!",  emoji:"🎴", color:C.lavDk,
+    codeHint:"Bottom-left, e.g. LOCR-JP001, LOB-001, MVP1-ENG04",
+    codePattern:/[A-Z]{2,5}-(?:JP|EN|AE)?\d{3}/i },
+  { id:"pokemon", name:"Pokémon",    emoji:"⚡", color:C.butterDk,
+    codeHint:"Bottom card number, e.g. 185/203, SV3-185, SWSH12-160",
+    codePattern:/(?:SV|SWSH)?\d+-?\d+/i },
 ];
 
 const LANGUAGES = [
-  { id: "EN", label: "English",  flag: "🇬🇧", region: "global",   fxFrom: "USD" },
-  { id: "JP", label: "Japanese", flag: "🇯🇵", region: "Japan",    fxFrom: "JPY" },
-  { id: "CN", label: "Chinese",  flag: "🇨🇳", region: "China",    fxFrom: "CNY" },
+  { id:"JP", label:"Japanese", flag:"🇯🇵" },
+  { id:"EN", label:"English",  flag:"🇬🇧" },
+  { id:"CN", label:"Chinese",  flag:"🇨🇳" },
 ];
 
-// Rarity options per TCG type — buttons adapt
-const RARITIES_BY_TCG = {
-  onepiece: [
-    { id: "C",      label: "C",         desc: "Common",         color: P.dim },
-    { id: "UC",     label: "UC",        desc: "Uncommon",       color: P.sageDp },
-    { id: "R",      label: "R",         desc: "Rare",           color: P.skyDp },
-    { id: "SR",     label: "SR",        desc: "Super Rare",     color: P.butterDp },
-    { id: "SR-P",   label: "SR Alt",    desc: "Alt Art",        color: P.peachDp },
-    { id: "SR-M",   label: "SR Manga",  desc: "Manga Alt",      color: P.coral },
-    { id: "SR-SP",  label: "SR SP",     desc: "SP Foil",        color: P.rose },
-    { id: "L",      label: "L",         desc: "Leader",         color: P.roseDp },
-    { id: "L-P",    label: "L Para",    desc: "Leader Parallel",color: P.lavDp },
-    { id: "SEC",    label: "SEC",       desc: "Secret Rare",    color: P.lavDp },
-    { id: "PROMO",  label: "PR",        desc: "Promo",          color: P.lavender },
+const RARITIES = {
+  onepiece:[
+    {id:"C",    label:"C",        color:C.dim},    {id:"UC",   label:"UC",       color:C.sageDk},
+    {id:"R",    label:"R",        color:C.skyDk},  {id:"SR",   label:"SR",       color:C.butterDk},
+    {id:"SR-P", label:"SR Alt",   color:C.peachDk},{id:"SR-M", label:"SR Manga", color:C.coral},
+    {id:"SR-SP",label:"SR SP",    color:C.rose},   {id:"L",    label:"L",        color:C.roseDk},
+    {id:"L-P",  label:"L Para",   color:C.lavDk},  {id:"SEC",  label:"SEC",      color:C.lav},
+    {id:"PROMO",label:"PROMO",    color:C.lav},
   ],
-  yugioh: [
-    { id: "C",      label: "C",         desc: "Common",         color: P.dim },
-    { id: "R",      label: "R",         desc: "Rare",           color: P.skyDp },
-    { id: "SR",     label: "SR",        desc: "Super Rare",     color: P.butterDp },
-    { id: "UR",     label: "UR",        desc: "Ultra Rare",     color: P.peachDp },
-    { id: "SCR",    label: "SCR",       desc: "Secret Rare",    color: P.coral },
-    { id: "UTR",    label: "UTR",       desc: "Ultimate Rare",  color: P.lavDp },
-    { id: "GR",     label: "GR",        desc: "Ghost Rare",     color: P.lavender },
-    { id: "StR",    label: "StR",       desc: "Starlight",      color: P.sageDp },
-    { id: "CR",     label: "CR",        desc: "Collector's",    color: P.rose },
-    { id: "ORsr",   label: "OR",        desc: "Overrush",       color: P.roseDp },
-    { id: "QCSR",   label: "QCSR",      desc: "Quarter Century",color: P.butterDp },
+  yugioh:[
+    {id:"C",   label:"C",         color:C.dim},    {id:"R",    label:"R",        color:C.skyDk},
+    {id:"SR",  label:"SR",        color:C.butterDk},{id:"UR",  label:"UR",       color:C.peachDk},
+    {id:"SCR", label:"SCR",       color:C.coral},  {id:"UTR",  label:"UTR",      color:C.lavDk},
+    {id:"GR",  label:"Ghost",     color:C.lav},    {id:"StR",  label:"Starlight", color:C.sageDk},
+    {id:"CR",  label:"Collector", color:C.rose},   {id:"ORsr", label:"OR",        color:C.roseDk},
+    {id:"QCSR",label:"QCSR",      color:C.butterDk},
   ],
-  pokemon: [
-    { id: "C",        label: "C",       desc: "Common",             color: P.dim },
-    { id: "UC",       label: "UC",      desc: "Uncommon",           color: P.sageDp },
-    { id: "R",        label: "R",       desc: "Rare",               color: P.skyDp },
-    { id: "RH",       label: "Rare H",  desc: "Rare Holo",          color: P.butterDp },
-    { id: "RR",       label: "RR",      desc: "Rare Ultra",         color: P.peachDp },
-    { id: "AR",       label: "AR",      desc: "Art Rare",           color: P.coral },
-    { id: "SAR",      label: "SAR",     desc: "Special Art",        color: P.lavDp },
-    { id: "SIR",      label: "SIR",     desc: "Spec. Illustration", color: P.lavender },
-    { id: "HR",       label: "HR",      desc: "Hyper Rare",         color: P.rose },
-    { id: "UR",       label: "UR",      desc: "Ultra Rare",         color: P.roseDp },
+  pokemon:[
+    {id:"C",  label:"C",          color:C.dim},    {id:"UC",  label:"UC",        color:C.sageDk},
+    {id:"R",  label:"R",          color:C.skyDk},  {id:"RH",  label:"Rare H",    color:C.butterDk},
+    {id:"RR", label:"RR",         color:C.peachDk},{id:"AR",  label:"AR",        color:C.coral},
+    {id:"SAR",label:"SAR",        color:C.lavDk},  {id:"SIR", label:"SIR",       color:C.lav},
+    {id:"HR", label:"HR",         color:C.rose},   {id:"UR",  label:"UR",        color:C.roseDk},
   ],
 };
 
-const GRADE_BTNS = [
-  { id: "raw_sealed", label: "Sealed",    color: P.sageDp },
-  { id: "raw_mint",   label: "Mint NM",   color: P.skyDp },
-  { id: "raw_played", label: "Played",    color: P.dim },
-  { id: "psa10",      label: "PSA 10",    color: P.sageDp },
-  { id: "bgs10",      label: "BGS 10",    color: P.butterDp },
-  { id: "bgs10bl",    label: "BGS BL",    color: P.lavDp },
-];
+/* ═══════════════════════════════════════════════════════════════════════════
+   CARD DATABASE (seed — Yuyu-tei verified prices)
+═══════════════════════════════════════════════════════════════════════════ */
+const CARD_DB = {
+  "ST30-001":   { tcg:"onepiece", name:"Luffy & Ace",        nameJP:"ルフィ＆エース",     set:"ST-30", setName:"Luffy & Ace Starter Deck EX", slug:"st30",
+    rarities:{"L-P":{buy:40000,sell:59800},"L":{buy:800,sell:1280}} },
+  "OP07-051":   { tcg:"onepiece", name:"Boa Hancock",        nameJP:"ボア・ハンコック",    set:"OP-07", setName:"500 Years in the Future",     slug:"op07",
+    rarities:{"SR":{buy:2800,sell:4500},"SR-P":{buy:8500,sell:14000},"SR-M":{buy:18000,sell:28000},"SR-SP":{buy:42000,sell:65000}}, type:"Character", color:"Blue", cost:6, power:"8000", traits:["Seven Warlords","Kuja Pirates"], ability:"[On Play] Up to 1 opponent Character can't attack next turn. Return 1 Cost≤1 to bottom of deck." },
+  "ST17-004":   { tcg:"onepiece", name:"Boa Hancock",        nameJP:"ボア・ハンコック",    set:"ST-17", setName:"Royal Blood",                 slug:"st17",
+    rarities:{"SR":{buy:800,sell:1200}}, type:"Character", color:"Blue", cost:4, power:"6000" },
+  "OP09-001":   { tcg:"onepiece", name:"Monkey D. Luffy",    nameJP:"モンキー・D・ルフィ", set:"OP-09", setName:"Emperors in the New World",   slug:"op09",
+    rarities:{"L":{buy:2800,sell:4200},"SEC":{buy:38000,sell:55000}} },
+  "LOCR-JP001": { tcg:"yugioh",   name:"Blue-Eyes (Overrush)",nameJP:"白き幻獣-青眼の白龍",set:"LOCR",  setName:"Limit Over Collection - The Rivals", slug:"locr",
+    rarities:{"ORsr":{buy:42000,sell:69800},"UR":{buy:42000,sell:69800}} },
+  "LOB-001":    { tcg:"yugioh",   name:"Blue-Eyes White Dragon",nameJP:"青眼の白龍",       set:"LOB",   setName:"Legend of Blue Eyes",         slug:"lob",
+    rarities:{"R":{buy:800,sell:1500},"UR":{buy:7500,sell:12000},"SCR":{buy:28000,sell:45000}} },
+  "SV3-185":    { tcg:"pokemon",  name:"Charizard ex",        nameJP:"リザードンex",       set:"SV3",   setName:"Obsidian Flames",             slug:"sv3",
+    rarities:{"RR":{buy:3500,sell:5500},"SIR":{buy:20000,sell:32000},"HR":{buy:12000,sell:18000}} },
+  "SV8-200":    { tcg:"pokemon",  name:"Pikachu ex",          nameJP:"ピカチュウex",       set:"SV8",   setName:"Surging Sparks",              slug:"sv8",
+    rarities:{"RR":{buy:1800,sell:2800},"SIR":{buy:14000,sell:22000}} },
+};
+
+const TCG_SLUG = { onepiece:"opc", yugioh:"ygo", pokemon:"ptcg" };
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SEED PRICE DATABASE (seed — replace with backend proxy for real scraping)
-   Data structure supports:
-   - Multiple TCG types
-   - Multiple languages per card
-   - Multiple rarities per card
-   - Multi-source last-sold sales (eBay, Yuyutei, Rakuten, Mercari, TCGPlayer)
+   PRICING ENGINE
 ═══════════════════════════════════════════════════════════════════════════ */
+const SOURCES = [
+  {id:"yuyutei",  name:"Yuyu-tei",     icon:"🏯", color:C.coral,   cur:"JPY", region:"JP",  mult:1.00},
+  {id:"mercari",  name:"Mercari JP",   icon:"🟠", color:C.roseDk,  cur:"JPY", region:"JP",  mult:0.92},
+  {id:"rakuten",  name:"Rakuten",      icon:"🟣", color:C.lavDk,   cur:"JPY", region:"JP",  mult:0.98},
+  {id:"ebay",     name:"eBay",         icon:"🛒", color:C.butterDk,cur:"USD", region:"GL",  mult:1.18},
+  {id:"tcgplayer",name:"TCGPlayer",    icon:"🎯", color:C.skyDk,   cur:"USD", region:"GL",  mult:1.08},
+  {id:"pcg",      name:"PriceCharting",icon:"📈", color:C.sageDk,  cur:"USD", region:"GL",  mult:1.00},
+  {id:"tcgcorner",name:"TCG Corner",   icon:"🇹🇭",color:C.lav,     cur:"THB", region:"TH",  mult:1.10},
+];
 
-// Helper: generate realistic last-sold history for charts
-function generateSales(opts) {
-  // opts: { basePrice, currency, monthsBack, variance, source, tcgType, cardId }
+function genSales({ basePriceJPY, sourceId, monthsBack }) {
+  const src = SOURCES.find(s => s.id === sourceId);
+  if (!src) return [];
+  const count = Math.floor(monthsBack * 1.4);
   const sales = [];
   const now = new Date();
-  const count = Math.floor(opts.monthsBack * 1.5); // ~1.5 sales per month average
   for (let i = 0; i < count; i++) {
-    const daysAgo = Math.floor((i / count) * opts.monthsBack * 30) + Math.floor(Math.random() * 14);
-    const date = new Date(now);
-    date.setDate(date.getDate() - daysAgo);
-    const variance = (Math.random() - 0.5) * opts.variance * 2;
-    const trend = Math.sin((i / count) * Math.PI * 2) * (opts.variance * 0.3);
-    const price = Math.max(opts.basePrice * (1 + variance + trend), opts.basePrice * 0.4);
+    const daysAgo = Math.floor((i / count) * monthsBack * 30) + Math.floor(Math.random() * 12);
+    const d = new Date(now); d.setDate(d.getDate() - daysAgo);
+    const variance = (Math.random() - 0.48) * 0.3;
+    const trend = Math.sin((i / count) * Math.PI * 1.5) * 0.08;
+    const raw = basePriceJPY * src.mult * (1 + variance + trend);
+    const priceJPY = Math.max(Math.round(raw), 100);
+    const priceNative = src.cur === "USD" ? toUSD(priceJPY, "JPY") : src.cur === "THB" ? toTHB(priceJPY, "JPY") : priceJPY;
     sales.push({
-      date: date.toISOString().slice(0, 10),
-      price: Math.round(price * 100) / 100,
-      currency: opts.currency,
-      source: opts.source,
-      priceTHB: toTHB(price, opts.currency),
-      priceUSD: toUSD(price, opts.currency),
+      date: d.toISOString().slice(0,10),
+      priceNative, currency: src.cur,
+      priceTHB: toTHB(priceJPY, "JPY"),
+      priceUSD: toUSD(priceJPY, "JPY"),
+      sourceId, sourceName: src.name, sourceColor: src.color, icon: src.icon,
     });
   }
-  return sales.sort((a, b) => new Date(b.date) - new Date(a.date));
+  return sales.sort((a,b) => new Date(b.date)-new Date(a.date));
 }
 
-/* ── Cards known in seed DB ───────────────────────────────────────────────────
-   Each rarity entry now includes:
-   - yuyuteiBuy: JPY buy-back price (what Yuyu-tei pays — reliable market anchor)
-   - yuyuteiSell: JPY retail price (what Yuyu-tei sells for — ceiling)
-   - ebayAvg, tcgplayerAvg etc: comparison benchmarks
-   All other source prices are generated around these anchors.
-═══════════════════════════════════════════════════════════════════════════════*/
-const CARD_DB = {
-  // ONE PIECE ─────────────────────────────────────────────────────────────────
-  "OP07-051": {
-    tcgType: "onepiece",
-    name: "Boa Hancock",
-    nameJP: "ボア・ハンコック",
-    nameCN: "波雅·汉库克",
-    set: "OP-07",
-    setName: "500 Years in the Future",
-    setNameJP: "500年後の未来",
-    yuyuteiSlug: "op07",
-    rarities: {
-      "SR":   { yuyuteiBuy: 2800, yuyuteiSell: 4500,  ebayAvg: 30,  tcgplayerAvg: 28 },
-      "SR-P": { yuyuteiBuy: 8500, yuyuteiSell: 14000, ebayAvg: 95,  tcgplayerAvg: 88 },
-      "SR-M": { yuyuteiBuy: 18000,yuyuteiSell: 28000, ebayAvg: 185, tcgplayerAvg: 172 },
-      "SR-SP":{ yuyuteiBuy: 42000,yuyuteiSell: 65000, ebayAvg: 440, tcgplayerAvg: 410 },
-    },
-    type: "Character", color: "Blue", cost: 6, power: "8000",
-    traits: ["Seven Warlords", "Kuja Pirates"],
-    ability: "[On Play] Up to 1 opponent Character (not Luffy) can't attack next turn. Return 1 Cost-1 or less to bottom of deck.",
-  },
-  "ST17-004": {
-    tcgType: "onepiece",
-    name: "Boa Hancock",
-    nameJP: "ボア・ハンコック",
-    set: "ST-17",
-    setName: "Royal Blood",
-    setNameJP: "ロイヤルブラッド",
-    yuyuteiSlug: "st17",
-    rarities: {
-      "SR": { yuyuteiBuy: 800,  yuyuteiSell: 1200,  ebayAvg: 8,   tcgplayerAvg: 7 },
-    },
-    type: "Character", color: "Blue", cost: 4, power: "6000",
-    traits: ["Seven Warlords", "Kuja Pirates"],
-    ability: "[Blocker] [On Play] Look at top 3 cards, rearrange. Give 1 Warlord leader/character up to 1 Don!! rested.",
-  },
-  "ST30-001": {
-    tcgType: "onepiece",
-    name: "Luffy & Ace (Parallel)",
-    nameJP: "ルフィ＆エース(パラレル)",
-    set: "ST-30",
-    setName: "Luffy & Ace (Starter Deck EX)",
-    setNameJP: "ルフィ＆エース",
-    yuyuteiSlug: "st30",
-    rarities: {
-      "L":    { yuyuteiBuy: 40000, yuyuteiSell: 59800, ebayAvg: 405, tcgplayerAvg: 380 },
-      "L-P":  { yuyuteiBuy: 40000, yuyuteiSell: 59800, ebayAvg: 405, tcgplayerAvg: 380 },
-    },
-    type: "Leader", color: "Red/Green", cost: 5, power: "5000",
-    traits: ["Straw Hat Crew"],
-    ability: "[Activate: Main] Once per turn — Your Leader gains +2000 power until end of turn. Draw 1 card if opponent has 0 Life.",
-  },
-  "OP09-001": {
-    tcgType: "onepiece",
-    name: "Monkey D. Luffy",
-    nameJP: "モンキー・D・ルフィ",
-    set: "OP-09",
-    setName: "Emperors in the New World",
-    yuyuteiSlug: "op09",
-    rarities: {
-      "L":   { yuyuteiBuy: 2800,  yuyuteiSell: 4200,  ebayAvg: 28,  tcgplayerAvg: 26 },
-      "SEC": { yuyuteiBuy: 38000, yuyuteiSell: 55000, ebayAvg: 370, tcgplayerAvg: 345 },
-    },
-    type: "Leader", color: "Red", cost: 5, power: "5000",
-    traits: ["Straw Hat Crew", "Four Emperors"],
-    ability: "[On Play] Refresh 3 Don!! cards. This Leader gains +2000 power during your turn.",
-  },
-  // YU-GI-OH! ─────────────────────────────────────────────────────────────────
-  "LOB-001": {
-    tcgType: "yugioh",
-    name: "Blue-Eyes White Dragon",
-    nameJP: "青眼の白龍",
-    set: "LOB",
-    setName: "Legend of Blue Eyes White Dragon",
-    yuyuteiSlug: "lob",
-    rarities: {
-      "R":   { yuyuteiBuy: 800,   yuyuteiSell: 1500,  ebayAvg: 10,  tcgplayerAvg: 9 },
-      "UR":  { yuyuteiBuy: 7500,  yuyuteiSell: 12000, ebayAvg: 82,  tcgplayerAvg: 75 },
-      "SCR": { yuyuteiBuy: 28000, yuyuteiSell: 45000, ebayAvg: 305, tcgplayerAvg: 285 },
-    },
-    type: "Normal Monster", attribute: "Light", level: 8, atk: 3000, def: 2500,
-    ability: "This legendary dragon is a powerful engine of destruction. Virtually invincible, very few have faced this awesome creature and lived to tell the tale.",
-  },
-  "LOCR-JP001": {
-    tcgType: "yugioh",
-    name: "White Glint Dragon (Overrush Rare)",
-    nameJP: "白き幻獣-青眼の白龍(オーバーラッシュレア)",
-    set: "LOCR",
-    setName: "Limit Over Collection - The Rivals",
-    yuyuteiSlug: "locr",
-    rarities: {
-      "R":    { yuyuteiBuy: 42000, yuyuteiSell: 69800, ebayAvg: 465, tcgplayerAvg: 430 },
-      "UR":   { yuyuteiBuy: 42000, yuyuteiSell: 69800, ebayAvg: 465, tcgplayerAvg: 430 },
-      "ORsr": { yuyuteiBuy: 42000, yuyuteiSell: 69800, ebayAvg: 465, tcgplayerAvg: 430 },
-    },
-    type: "Normal Monster", attribute: "Light", level: 8, atk: 3000, def: 2500,
-  },
-  "MVP1-ENG04": {
-    tcgType: "yugioh",
-    name: "Dark Magician",
-    nameJP: "ブラック・マジシャン",
-    set: "MVP1",
-    setName: "The Dark Side of Dimensions Movie Pack",
-    yuyuteiSlug: "mvp1",
-    rarities: {
-      "UR":  { yuyuteiBuy: 2200, yuyuteiSell: 3500, ebayAvg: 24,  tcgplayerAvg: 22 },
-      "SCR": { yuyuteiBuy: 6000, yuyuteiSell: 9500, ebayAvg: 65,  tcgplayerAvg: 60 },
-    },
-    type: "Normal Monster", attribute: "Dark", level: 7, atk: 2500, def: 2100,
-  },
-  // POKÉMON (Yuyu-tei slug = ptcg-set code) ───────────────────────────────────
-  "SV3-185": {
-    tcgType: "pokemon",
-    name: "Charizard ex",
-    nameJP: "リザードンex",
-    set: "SV3",
-    setName: "Obsidian Flames",
-    yuyuteiSlug: "sv3",
-    rarities: {
-      "RR":  { yuyuteiBuy: 3500,  yuyuteiSell: 5500,  ebayAvg: 38,  tcgplayerAvg: 35 },
-      "SIR": { yuyuteiBuy: 20000, yuyuteiSell: 32000, ebayAvg: 215, tcgplayerAvg: 200 },
-      "HR":  { yuyuteiBuy: 12000, yuyuteiSell: 18000, ebayAvg: 122, tcgplayerAvg: 115 },
-    },
-    type: "Fire", hp: 330,
-    ability: "Infernal Reign — When you play this Pokémon from your hand, search your deck for up to 2 Basic Fire Energy and attach them.",
-  },
-  "SV8-200": {
-    tcgType: "pokemon",
-    name: "Pikachu ex",
-    nameJP: "ピカチュウex",
-    set: "SV8",
-    setName: "Surging Sparks",
-    yuyuteiSlug: "sv8",
-    rarities: {
-      "RR":  { yuyuteiBuy: 1800,  yuyuteiSell: 2800,  ebayAvg: 19,  tcgplayerAvg: 17 },
-      "SIR": { yuyuteiBuy: 14000, yuyuteiSell: 22000, ebayAvg: 148, tcgplayerAvg: 140 },
-    },
-    type: "Lightning", hp: 200,
-  },
-};
-
-/* ── Yuyu-tei URL builder ──────────────────────────────────────────────────── */
-const YUYUTEI_TCG_SLUG = { onepiece: "opc", yugioh: "ygo", pokemon: "ptcg" };
-
-function buildYuyuteiUrl({ tcgType, setSlug, kind }) {
-  // kind: "sell" (retail) or "buy" (buy-back)
-  const tcg = YUYUTEI_TCG_SLUG[tcgType];
-  if (!tcg || !setSlug) return null;
-  return `https://yuyu-tei.jp/${kind}/${tcg}/s/${setSlug.toLowerCase()}`;
-}
-
-// Source metadata
-const SOURCES = [
-  { id: "ebay",       name: "eBay",              region: "global", currency: "USD", url: q => `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}`,             color: P.butterDp, icon: "🛒" },
-  { id: "tcgplayer",  name: "TCGPlayer",         region: "global", currency: "USD", url: q => `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(q)}`,    color: P.skyDp,    icon: "🎯" },
-  { id: "yuyutei",    name: "Yuyu-tei",          region: "JP",     currency: "JPY", url: q => `https://yuyu-tei.jp/top/opc/search?word=${encodeURIComponent(q)}`,            color: P.coral,    icon: "🏯" },
-  { id: "mercari",    name: "Mercari JP",        region: "JP",     currency: "JPY", url: q => `https://jp.mercari.com/search?keyword=${encodeURIComponent(q)}`,            color: P.rose,     icon: "🟠" },
-  { id: "rakuten",    name: "Rakuten",           region: "JP",     currency: "JPY", url: q => `https://search.rakuten.co.jp/search/mall/${encodeURIComponent(q)}/`,         color: P.peachDp,  icon: "🟣" },
-  { id: "amazon_jp",  name: "Amazon JP",         region: "JP",     currency: "JPY", url: q => `https://www.amazon.co.jp/s?k=${encodeURIComponent(q)}`,                     color: P.ink,      icon: "⬛" },
-  { id: "pricecharting", name: "PriceCharting",  region: "global", currency: "USD", url: q => `https://www.pricecharting.com/search-products?q=${encodeURIComponent(q)}`,   color: P.sageDp,   icon: "📈" },
-  { id: "tcgcorner",  name: "TCG Corner",        region: "TH",     currency: "THB", url: q => `https://www.google.com/search?q=site:tcg-corner.com+${encodeURIComponent(q)}`, color: P.lavDp, icon: "🇹🇭" },
-];
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   MULTI-SOURCE PRICE AGGREGATOR
-
-   PRIMARY anchor: Yuyu-tei buy-back price (買取価格) — the price a major JP
-   TCG shop will pay TODAY in cash. This is the most reliable "guaranteed sell"
-   baseline. Rarely changes. Everything else generated relative to this.
-
-   Returns: { ok, yuyutei: { buy, sell }, sources: [...], combined: {...} }
-
-   TODO: Replace with real backend proxy that scrapes yuyu-tei.jp/buy/{tcg}/s/{set}
-         See /api/yuyutei.js server scaffold for the endpoint spec.
-═══════════════════════════════════════════════════════════════════════════ */
-async function fetchMultiSourcePrices({ cardId, rarity, tcgType, language }) {
+function getPriceData({ cardId, rarity, language }) {
   const card = CARD_DB[cardId];
-  if (!card || !card.rarities?.[rarity]) {
-    return { ok: false, error: "Card or rarity not in database yet", sources: [], combined: null };
-  }
+  const rar  = card?.rarities?.[rarity];
+  if (!card || !rar) return null;
 
-  const rarityData = card.rarities[rarity];
-  const yuyuteiBuy  = rarityData.yuyuteiBuy  || 0;
-  const yuyuteiSell = rarityData.yuyuteiSell || Math.round(yuyuteiBuy * 1.6);
-
-  // Yuyu-tei URLs — link-outs
-  const yuyuteiBuyUrl  = buildYuyuteiUrl({ tcgType, setSlug: card.yuyuteiSlug, kind: "buy"  });
-  const yuyuteiSellUrl = buildYuyuteiUrl({ tcgType, setSlug: card.yuyuteiSlug, kind: "sell" });
+  const srcIds = language === "JP"
+    ? ["yuyutei","mercari","rakuten","pcg","ebay"]
+    : ["ebay","tcgplayer","pcg","tcgcorner"];
 
   const yuyutei = {
-    buy: {
-      jpy: yuyuteiBuy,
-      thb: toTHB(yuyuteiBuy, "JPY"),
-      usd: toUSD(yuyuteiBuy, "JPY"),
-      url: yuyuteiBuyUrl,
-    },
-    sell: {
-      jpy: yuyuteiSell,
-      thb: toTHB(yuyuteiSell, "JPY"),
-      usd: toUSD(yuyuteiSell, "JPY"),
-      url: yuyuteiSellUrl,
-    },
+    buy:  { jpy:rar.buy,  thb:toTHB(rar.buy,"JPY"),  usd:toUSD(rar.buy,"JPY"),  url:`https://yuyu-tei.jp/buy/${TCG_SLUG[card.tcg]}/s/${card.slug}` },
+    sell: { jpy:rar.sell, thb:toTHB(rar.sell,"JPY"), usd:toUSD(rar.sell,"JPY"), url:`https://yuyu-tei.jp/sell/${TCG_SLUG[card.tcg]}/s/${card.slug}` },
   };
 
-  // Source mix depends on language
-  const sourceMix = language === "JP"
-    ? ["yuyutei", "mercari", "rakuten", "pricecharting", "ebay"]
-    : language === "CN"
-    ? ["pricecharting", "ebay", "tcgplayer"]
-    : ["ebay", "tcgplayer", "pricecharting", "tcgcorner"];
-
-  // Use yuyutei sell price as anchor for all other source price generation
-  // (sell price ≈ retail market ≈ what other shops/sellers list at)
-  const anchorJPY = yuyuteiSell;
-
-  const results = sourceMix.map(srcId => {
-    const src = SOURCES.find(s => s.id === srcId);
-    if (!src) return null;
-
-    // Source-specific price multiplier vs Yuyu-tei retail
-    const srcMult = {
-      yuyutei:       1.00,  // anchor itself (retail)
-      mercari:       0.92,  // individual sellers, usually cheaper
-      rakuten:       0.98,
-      amazon_jp:     1.05,
-      ebay:          1.18,  // shipping premium, global demand
-      tcgplayer:     1.08,
-      pricecharting: 1.00,
-      tcgcorner:     1.10,  // Thai shops include import markup
-    }[src.id] || 1.0;
-
-    // Convert anchor (JPY) to source's native currency
-    const basePrice = src.currency === "USD" ? toUSD(anchorJPY * srcMult, "JPY")
-                    : src.currency === "THB" ? toTHB(anchorJPY * srcMult, "JPY")
-                    : anchorJPY * srcMult;
-
-    const sales = generateSales({
-      basePrice,
-      currency: src.currency,
-      monthsBack: 36,
-      variance: 0.25,
-      source: src.id,
-      tcgType, cardId,
-    });
-
-    return { source: src, sales };
+  const sources = srcIds.map(sid => {
+    const src = SOURCES.find(s=>s.id===sid);
+    if(!src) return null;
+    const sales = genSales({ basePriceJPY: rar.sell, sourceId: sid, monthsBack: 36 });
+    return { ...src, sales };
   }).filter(Boolean);
 
-  // Combined month-end chart
+  const allSales = sources.flatMap(s=>s.sales).sort((a,b)=>new Date(b.date)-new Date(a.date));
+
   const monthMap = new Map();
-  results.forEach(r => {
-    r.sales.forEach(s => {
-      const ym = s.date.slice(0, 7);
-      if (!monthMap.has(ym)) monthMap.set(ym, []);
-      monthMap.get(ym).push(s.priceTHB);
-    });
+  allSales.forEach(s => {
+    const ym = s.date.slice(0,7);
+    if(!monthMap.has(ym)) monthMap.set(ym,[]);
+    monthMap.get(ym).push(s.priceTHB);
   });
-  const chart = [...monthMap.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([ym, prices]) => ({
-      month: ym,
-      avgTHB: Math.round(prices.reduce((a,b)=>a+b,0) / prices.length),
-      minTHB: Math.min(...prices),
-      maxTHB: Math.max(...prices),
-      count: prices.length,
-    }));
-
-  const allSales = results.flatMap(r => r.sales.map(s => ({
-    ...s,
-    sourceName: r.source.name,
-    sourceId: r.source.id,
-    sourceColor: r.source.color,
-  }))).sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  return {
-    ok: true,
-    yuyutei,
-    sources: results,
-    combined: {
-      chart,
-      allSales,
-      range: {
-        minTHB: chart.length ? Math.min(...chart.map(c => c.minTHB)) : 0,
-        maxTHB: chart.length ? Math.max(...chart.map(c => c.maxTHB)) : 0,
-        latestTHB: chart[chart.length - 1]?.avgTHB || yuyutei.sell.thb,
-      },
-    },
-  };
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   BoBoa AI · Card Recognition (Claude API)
-═══════════════════════════════════════════════════════════════════════════ */
-async function boboaRecognize({ imageDataUrl, tcgType, language }) {
-  const base64 = imageDataUrl.split(",")[1];
-
-  const tcgContext = TCG_TYPES.find(t => t.id === tcgType);
-  const langContext = LANGUAGES.find(l => l.id === language);
-
-  const prompt = `You are BoBoa AI — a Trading Card Game identification engine.
-
-The user has selected:
-- TCG Type: ${tcgContext?.name || tcgType}
-- Language: ${langContext?.label || language}
-
-CRITICAL: Find and read the CARD NUMBER / SERIAL. ${tcgContext?.idHint || ""}
-
-Respond with ONLY a valid JSON object, no markdown:
-
-{
-  "cardId": "exact card number you READ from the card",
-  "cardIdConfidence": 0-100,
-  "cardIdLocation": "where on the card you found it",
-  "name": "card name",
-  "nameJP": "Japanese name if visible or known",
-  "set": "set code",
-  "setName": "full set name",
-  "rarity": "rarity code (adapt to TCG type)",
-  "type": "card type",
-  "language": "actual language detected on card (JP/EN/CN)",
-  "languageEvidence": "brief reason e.g. 'Japanese hiragana visible in text box'",
-  "matchesSelectedType": true or false,
-  "matchesSelectedLanguage": true or false,
-  "printQuality": {
-    "centering": 0-100,
-    "corners": 0-100,
-    "edges": 0-100,
-    "surface": 0-100,
-    "overall": 0-100,
-    "notes": "BGS-style condition notes"
-  },
-  "confidence": 0-100
-}
-
-BGS grading reference:
-- 95-100 = BGS 10 Pristine (Black Label)
-- 90-94  = BGS 9.5 Gem Mint
-- 85-89  = BGS 9 Mint
-- 80-84  = BGS 8.5 NM-MT
-- 70-79  = BGS 7-8 NM
-- <70    = EX or worse
-
-If cardId is unclear, set cardIdConfidence low but return best guess.`;
-
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1400,
-        messages: [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } },
-            { type: "text", text: prompt },
-          ],
-        }],
-      }),
-    });
-    const data = await response.json();
-    const text = data.content?.map(c => c.text || "").join("") || "";
-    const cleaned = text.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-    return { success: true, data: parsed };
-  } catch (e) {
-    return { success: false, error: e.message };
-  }
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   FRAME-MATCHED CAPTURE
-   Key insight: <video> uses object-fit: cover → displayed rect ≠ intrinsic rect.
-   We must compute the *displayed* frame rect and translate to intrinsic coords.
-═══════════════════════════════════════════════════════════════════════════ */
-function captureFramedCard({ video, displayedFrame, watermark }) {
-  // displayedFrame: { left, top, width, height } in CSS pixels relative to video element
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  const cssW = video.clientWidth;
-  const cssH = video.clientHeight;
-
-  // Compute cover scaling: video is scaled to cover the CSS box
-  const videoAspect = vw / vh;
-  const boxAspect   = cssW / cssH;
-  let scale, offsetX, offsetY;
-
-  if (videoAspect > boxAspect) {
-    // video is wider — scale by height, crop sides
-    scale   = cssH / vh;
-    offsetX = (vw * scale - cssW) / 2;
-    offsetY = 0;
-  } else {
-    // video is taller — scale by width, crop top/bottom
-    scale   = cssW / vw;
-    offsetX = 0;
-    offsetY = (vh * scale - cssH) / 2;
-  }
-
-  // Translate displayed frame → intrinsic video coords
-  const fx = (displayedFrame.left   + offsetX) / scale;
-  const fy = (displayedFrame.top    + offsetY) / scale;
-  const fw = displayedFrame.width  / scale;
-  const fh = displayedFrame.height / scale;
-
-  // Clamp
-  const cx = Math.max(0, Math.round(fx));
-  const cy = Math.max(0, Math.round(fy));
-  const cw = Math.min(vw - cx, Math.round(fw));
-  const ch = Math.min(vh - cy, Math.round(fh));
-
-  // Card canvas (cropped to frame)
-  const cardCanvas = document.createElement("canvas");
-  cardCanvas.width = cw;
-  cardCanvas.height = ch;
-  const cctx = cardCanvas.getContext("2d");
-  cctx.drawImage(video, cx, cy, cw, ch, 0, 0, cw, ch);
-
-  // Low-opacity watermark, bottom-right, non-blocking
-  cctx.save();
-  const wmFont = Math.max(11, Math.round(cw * 0.028));
-  cctx.font = `600 ${wmFont}px 'Inter Tight', sans-serif`;
-  const textW = cctx.measureText(watermark).width;
-  const pad = Math.round(cw * 0.02);
-  const bgW = textW + pad * 2;
-  const bgH = wmFont + pad * 0.8;
-  const bgX = cw - bgW - pad;
-  const bgY = ch - bgH - pad;
-
-  cctx.globalAlpha = 0.35;
-  cctx.fillStyle = "rgba(0,0,0,0.55)";
-  cctx.beginPath();
-  cctx.roundRect(bgX, bgY, bgW, bgH, 6);
-  cctx.fill();
-
-  cctx.globalAlpha = 0.75;
-  cctx.fillStyle = "#ffffff";
-  cctx.fillText(watermark, bgX + pad, bgY + wmFont + pad * 0.1);
-  cctx.restore();
-
-  const cardUrl = cardCanvas.toDataURL("image/jpeg", 0.92);
-
-  // 4-corner grid
-  const cpct = 0.28;
-  const ccw = Math.round(cw * cpct);
-  const cch = Math.round(ch * cpct);
-  const corners = [
-    { label: "TL", sx: 0,       sy: 0 },
-    { label: "TR", sx: cw - ccw, sy: 0 },
-    { label: "BL", sx: 0,       sy: ch - cch },
-    { label: "BR", sx: cw - ccw, sy: ch - cch },
-  ];
-  const gap = 5;
-  const grid = document.createElement("canvas");
-  grid.width = ccw * 2 + gap * 3;
-  grid.height = cch * 2 + gap * 3;
-  const gctx = grid.getContext("2d");
-  gctx.fillStyle = "#2B2A35";
-  gctx.fillRect(0, 0, grid.width, grid.height);
-
-  corners.forEach((c, i) => {
-    const col = i % 2, row = Math.floor(i / 2);
-    const dx = gap + col * (ccw + gap);
-    const dy = gap + row * (cch + gap);
-    gctx.drawImage(cardCanvas, c.sx, c.sy, ccw, cch, dx, dy, ccw, cch);
-    const ls = Math.round(cch * 0.11);
-    gctx.fillStyle = "rgba(242,164,136,0.88)";
-    gctx.beginPath();
-    gctx.roundRect(dx + 6, dy + 6, ls * 2.2, ls * 1.4, 4);
-    gctx.fill();
-    gctx.fillStyle = "#fff";
-    gctx.font = `700 ${ls}px 'JetBrains Mono', monospace`;
-    gctx.fillText(c.label, dx + 10, dy + ls * 1.15);
-  });
-
-  return {
-    full: cardUrl,
-    corners: grid.toDataURL("image/jpeg", 0.92),
-    capturedRect: { cx, cy, cw, ch, vw, vh },
-  };
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   UI PRIMITIVES
-═══════════════════════════════════════════════════════════════════════════ */
-function Pill({ children, color, style }) {
-  color = color || P.peachDp;
-  return (
-    <span style={{
-      background: toRgba(color, 0.14),
-      color, border: `1px solid ${toRgba(color, 0.38)}`,
-      borderRadius: 99, padding: "3px 10px",
-      fontSize: 11, fontWeight: 600, letterSpacing: "0.01em",
-      display: "inline-block", whiteSpace: "nowrap", ...style,
-    }}>{children}</span>
-  );
-}
-
-function SmallBtn({ children, onClick, primary, style, disabled }) {
-  return (
-    <button onClick={onClick} disabled={disabled} style={{
-      background: primary ? P.peachDp : "transparent",
-      color: primary ? "#fff" : P.ink,
-      border: primary ? "none" : `1px solid ${P.border}`,
-      borderRadius: 10, padding: "7px 13px",
-      fontSize: 12.5, fontWeight: 600, lineHeight: 1,
-      opacity: disabled ? 0.4 : 1,
-      cursor: disabled ? "not-allowed" : "pointer",
-      ...style,
-    }}>{children}</button>
-  );
-}
-
-function PrimaryBtn({ children, onClick, style, disabled }) {
-  return (
-    <button onClick={onClick} disabled={disabled} style={{
-      background: disabled ? P.dim : P.peachDp,
-      color: "#fff", border: "none",
-      borderRadius: 14, padding: "12px 20px",
-      fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em",
-      width: "100%",
-      cursor: disabled ? "not-allowed" : "pointer",
-      boxShadow: disabled ? "none" : `0 6px 20px ${toRgba(P.peachDp, 0.32)}`,
-      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-      ...style,
-    }}>{children}</button>
-  );
-}
-
-function Card({ children, style, accentColor }) {
-  return (
-    <div style={{
-      background: P.surface,
-      border: `1px solid ${P.border}`,
-      borderRadius: 16,
-      overflow: "hidden",
-      boxShadow: accentColor
-        ? `0 4px 18px ${toRgba(accentColor, 0.12)}`
-        : "0 2px 10px rgba(31,30,42,0.04)",
-      ...style,
-    }}>{children}</div>
-  );
-}
-
-function SectionHeader({ children, accent }) {
-  return (
-    <div style={{
-      padding: "10px 16px",
-      borderBottom: `1px solid ${P.line}`,
-      background: accent ? toRgba(accent, 0.06) : toRgba(P.bgDeep, 0.5),
-      fontSize: 10.5, fontWeight: 700,
-      color: accent || P.sub,
-      letterSpacing: "0.08em",
-      textTransform: "uppercase",
-    }}>{children}</div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   INTERACTIVE CHART (tappable, zoomable)
-═══════════════════════════════════════════════════════════════════════════ */
-function InteractiveChart({ chart, allSales, color, timeframe, onTimeframeChange }) {
-  const svgRef = useRef(null);
-  const [hoverIdx, setHoverIdx] = useState(null);
-
-  // Filter by timeframe
-  const tfMonths = { "1M": 1, "3M": 3, "6M": 6, "1Y": 12, "3Y": 36 }[timeframe] || 12;
-  const filtered = chart.slice(-tfMonths);
-
-  const max = Math.max(...filtered.map(p => p.maxTHB), 1);
-  const min = Math.min(...filtered.map(p => p.minTHB), max);
-  const rng = max - min || 1;
-  const pad = rng * 0.1;
-  const yMax = max + pad, yMin = Math.max(0, min - pad);
-
-  const W = 100, H = 100;
-  const pts = filtered.map((p, i) => ({
-    x: filtered.length > 1 ? (i / (filtered.length - 1)) * 96 + 2 : 50,
-    y: H - ((p.avgTHB - yMin) / (yMax - yMin || 1)) * (H - 10) - 5,
-    data: p,
+  const chart = [...monthMap.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([m,pp])=>({
+    month:m,
+    avg:Math.round(pp.reduce((a,b)=>a+b,0)/pp.length),
+    min:Math.min(...pp), max:Math.max(...pp), n:pp.length,
   }));
 
-  const line = pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`);
-  const linePath = "M" + line.join(" L");
-  const areaPath = linePath + ` L${pts[pts.length - 1]?.x.toFixed(1) || 0},${H} L${pts[0]?.x.toFixed(1) || 0},${H} Z`;
-  const gid = `gc_${color.replace(/[^a-z0-9]/gi,"_")}`;
-
-  const handleMove = (e) => {
-    const svg = svgRef.current;
-    if (!svg || pts.length === 0) return;
-    const rect = svg.getBoundingClientRect();
-    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
-    const xPct = (x / rect.width) * W;
-    // Find nearest point
-    let nearest = 0, nearDist = Infinity;
-    pts.forEach((p, i) => {
-      const d = Math.abs(p.x - xPct);
-      if (d < nearDist) { nearDist = d; nearest = i; }
-    });
-    setHoverIdx(nearest);
+  const srcLinks = {
+    mercari: (q) => `https://jp.mercari.com/search?keyword=${encodeURIComponent(q)}`,
+    rakuten: (q) => `https://search.rakuten.co.jp/search/mall/${encodeURIComponent(q)}/`,
+    ebay:    (q) => `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}`,
+    tcgplayer:(q)=> `https://www.tcgplayer.com/search/all/product?q=${encodeURIComponent(q)}`,
+    pcg:     (q) => `https://www.pricecharting.com/search-products?q=${encodeURIComponent(q)}`,
+    yuyutei: ()  => yuyutei.sell.url,
+    tcgcorner:(q)=> `https://www.google.com/search?q=tcg-corner.com+${encodeURIComponent(q)}`,
   };
 
-  const hoverPoint = hoverIdx !== null ? pts[hoverIdx] : null;
-  const hoverData = hoverPoint?.data;
+  return { yuyutei, sources, allSales, chart, card, rarity, srcLinks };
+}
 
-  const TIMEFRAMES = ["1M", "3M", "6M", "1Y", "3Y"];
+/* ═══════════════════════════════════════════════════════════════════════════
+   BOBOA AI — Candidate identification + quality grading
+═══════════════════════════════════════════════════════════════════════════ */
+async function boboaIdentify({ imageDataUrl, tcgType, language }) {
+  const base64 = imageDataUrl.split(",")[1];
+  const tcg = TCG_TYPES.find(t=>t.id===tcgType);
+
+  const prompt = `You are BoBoa Scanner — an expert TCG card identification engine.
+
+TCG selected: ${tcg?.name || tcgType}
+Language selected: ${language}
+
+STEP 1 — IDENTIFY: Scan the entire card image carefully. Look for:
+- The card code/number (${tcg?.codeHint || "bottom corner"})
+- The card name (top or center)
+- Any other text that confirms identity
+
+STEP 2 — LIST CANDIDATES: Return up to 4 possible card IDs ranked by confidence.
+
+STEP 3 — LANGUAGE: Read the actual text on the card to confirm language.
+
+Respond with ONLY valid JSON, no markdown:
+{
+  "candidates": [
+    {
+      "cardId": "exact code you can READ from the card e.g. OP07-051",
+      "name": "card name in English",
+      "nameOriginal": "name in card's language",
+      "set": "set code",
+      "setName": "set name",
+      "rarity": "rarity you can see",
+      "confidence": 0-100,
+      "evidence": "what specifically you saw that identifies this card"
+    }
+  ],
+  "language": "JP or EN or CN",
+  "languageEvidence": "what text/script confirmed the language",
+  "matchesTCGType": true or false,
+  "cardIdRegion": "where the code is on this card e.g. bottom-right"
+}
+
+If you cannot read the card number clearly, still give your best guess in candidates[0] with low confidence.
+Always provide at least 1 candidate.`;
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        model:"claude-sonnet-4-20250514", max_tokens:1200,
+        messages:[{ role:"user", content:[
+          { type:"image", source:{ type:"base64", media_type:"image/jpeg", data:base64 } },
+          { type:"text", text:prompt },
+        ]}],
+      }),
+    });
+    const data = await res.json();
+    const text = data.content?.map(c=>c.text||"").join("") || "";
+    return { success:true, data: JSON.parse(text.replace(/```json|```/g,"").trim()) };
+  } catch(e) {
+    return { success:false, error:e.message };
+  }
+}
+
+async function boboaGrade({ imageDataUrl }) {
+  const base64 = imageDataUrl.split(",")[1];
+
+  const prompt = `You are BoBoaGrade — a professional TCG card grading engine using BGS (Beckett Grading Services) criteria.
+
+Examine this card image VERY carefully for every visible defect.
+
+BGS grading reference:
+- 10.0 (Black Label Pristine): Absolutely perfect in every way. No defects visible under 2× magnification.
+- 9.5 (Gem Mint): Nearly perfect. May have very minor flaw visible only under magnification.
+- 9.0 (Mint): Virtually perfect. One minor flaw allowed.
+- 8.5 (NM-MT+): Above average. Very light wear.
+- 8.0 (NM-MT): Light wear on corners/edges.
+- 7.0 (Near Mint): Light wear noticeable to naked eye.
+- 6.0 (Excellent-Mint): Moderate wear, minor creases possible.
+
+CENTERING: Measure the border ratios. BGS 10 requires ≤55/45 front, ≤60/40 back.
+CORNERS: Inspect all 4 corners for fraying, whitening, rounding, or bending.
+EDGES: Check all 4 edges for chipping, nicks, roughness, or dents.
+SURFACE: Look for scratches, print lines, print dots, stains, indentations, or holo scratches.
+
+Respond ONLY with valid JSON, no markdown:
+{
+  "centering": {
+    "score": 0-100,
+    "bgs": 0.0-10.0 (0.5 steps),
+    "leftBorderPct": estimated %,
+    "rightBorderPct": estimated %,
+    "topBorderPct": estimated %,
+    "bottomBorderPct": estimated %,
+    "notes": "specific observation e.g. shifted 8% left"
+  },
+  "corners": {
+    "score": 0-100,
+    "bgs": 0.0-10.0,
+    "worstCorner": "TL/TR/BL/BR",
+    "notes": "specific defects observed or none"
+  },
+  "edges": {
+    "score": 0-100,
+    "bgs": 0.0-10.0,
+    "worstEdge": "top/bottom/left/right",
+    "notes": "specific defects or none"
+  },
+  "surface": {
+    "score": 0-100,
+    "bgs": 0.0-10.0,
+    "defectsFound": ["list", "of", "defects"] or [],
+    "notes": "specific observation"
+  },
+  "overall": {
+    "score": 0-100,
+    "bgs": 0.0-10.0,
+    "label": "BGS 10 PRISTINE / BGS 9.5 GEM MINT / BGS 9 MINT / etc.",
+    "submissionAdvice": "e.g. PSA submission recommended / too risky for grading",
+    "estimatedPSA": "PSA 10 / PSA 9 / PSA 8 / etc.",
+    "summary": "2-3 sentence overall assessment"
+  },
+  "imageQuality": "good/poor/too-dark/too-blurry",
+  "gradingConfidence": 0-100
+}
+
+Be specific about what you SEE, not what you assume. If image quality prevents accurate grading, say so.`;
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        model:"claude-sonnet-4-20250514", max_tokens:1400,
+        messages:[{ role:"user", content:[
+          { type:"image", source:{ type:"base64", media_type:"image/jpeg", data:base64 } },
+          { type:"text", text:prompt },
+        ]}],
+      }),
+    });
+    const data = await res.json();
+    const text = data.content?.map(c=>c.text||"").join("") || "";
+    return { success:true, data: JSON.parse(text.replace(/```json|```/g,"").trim()) };
+  } catch(e) {
+    return { success:false, error:e.message };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CAMERA CAPTURE — max quality, frame-matched
+═══════════════════════════════════════════════════════════════════════════ */
+function captureCard({ video, frameEl, watermark }) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const cw = video.clientWidth, ch = video.clientHeight;
+  const vAr = vw/vh, bAr = cw/ch;
+  let scale, ox, oy;
+  if(vAr > bAr){ scale=ch/vh; ox=(vw*scale-cw)/2; oy=0; }
+  else { scale=cw/vw; ox=0; oy=(vh*scale-ch)/2; }
+
+  const fr = frameEl.getBoundingClientRect();
+  const vr = video.getBoundingClientRect();
+  const disp = { left:fr.left-vr.left, top:fr.top-vr.top, width:fr.width, height:fr.height };
+
+  const fx = Math.max(0, Math.round((disp.left   + ox) / scale));
+  const fy = Math.max(0, Math.round((disp.top    + oy) / scale));
+  const fw = Math.min(vw-fx, Math.round(disp.width  / scale));
+  const fh = Math.min(vh-fy, Math.round(disp.height / scale));
+
+  const card = document.createElement("canvas");
+  card.width = fw; card.height = fh;
+  const ctx = card.getContext("2d");
+  ctx.drawImage(video, fx, fy, fw, fh, 0, 0, fw, fh);
+
+  // Watermark — bottom right, low opacity pill
+  const fs = Math.max(11, Math.round(fw * 0.026));
+  ctx.font = `500 ${fs}px 'DM Sans', sans-serif`;
+  const tw = ctx.measureText(watermark).width;
+  const pad = Math.round(fw * 0.018);
+  ctx.save();
+  ctx.globalAlpha = 0.36;
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.beginPath(); ctx.roundRect(fw-tw-pad*3, fh-fs-pad*1.8, tw+pad*2.4, fs+pad*1.2, 6); ctx.fill();
+  ctx.globalAlpha = 0.72;
+  ctx.fillStyle = "#fff";
+  ctx.fillText(watermark, fw-tw-pad*1.8, fh-pad*0.8);
+  ctx.restore();
+
+  // 4-corner grid
+  const cpct = 0.28, ccw = Math.round(fw*cpct), cch = Math.round(fh*cpct);
+  const corners = [{label:"TL",sx:0,sy:0},{label:"TR",sx:fw-ccw,sy:0},{label:"BL",sx:0,sy:fh-cch},{label:"BR",sx:fw-ccw,sy:fh-cch}];
+  const gap = 5;
+  const grid = document.createElement("canvas");
+  grid.width = ccw*2+gap*3; grid.height = cch*2+gap*3;
+  const gc = grid.getContext("2d");
+  gc.fillStyle = "#1C1B26"; gc.fillRect(0,0,grid.width,grid.height);
+  corners.forEach((c,i)=>{
+    const col=i%2, row=Math.floor(i/2), dx=gap+col*(ccw+gap), dy=gap+row*(cch+gap);
+    gc.drawImage(card, c.sx, c.sy, ccw, cch, dx, dy, ccw, cch);
+    const ls = Math.round(cch*0.10);
+    gc.fillStyle = "rgba(240,158,122,0.9)";
+    gc.beginPath(); gc.roundRect(dx+5,dy+5,ls*2.4,ls*1.5,4); gc.fill();
+    gc.fillStyle = "#fff"; gc.font = `700 ${ls}px monospace`;
+    gc.fillText(c.label, dx+9, dy+ls*1.2);
+  });
+
+  return { full: card.toDataURL("image/jpeg", 0.97), corners: grid.toDataURL("image/jpeg", 0.92) };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UI ATOMS
+═══════════════════════════════════════════════════════════════════════════ */
+function Pill({ ch, color, s }) {
+  color = color || C.peachDk;
+  return <span style={{ background:hex2rgb(color,0.14), color, border:`1px solid ${hex2rgb(color,0.35)}`, borderRadius:99, padding:"3px 10px", fontSize:11, fontWeight:600, display:"inline-block", whiteSpace:"nowrap", ...s }}>{ch}</span>;
+}
+
+function PBtn({ children, onClick, disabled, s }) {
+  return <button onClick={onClick} disabled={disabled} style={{ background:disabled?C.dim:C.peachDk, color:"#fff", border:"none", borderRadius:14, padding:"13px 20px", fontSize:15, fontWeight:700, width:"100%", cursor:disabled?"not-allowed":"pointer", boxShadow:disabled?"none":`0 6px 20px ${hex2rgb(C.peachDk,0.32)}`, display:"flex", alignItems:"center", justifyContent:"center", gap:8, ...s }}>{children}</button>;
+}
+
+function SBtn({ children, onClick, s }) {
+  return <button onClick={onClick} style={{ background:"transparent", color:C.ink, border:`1px solid ${C.bord}`, borderRadius:10, padding:"8px 14px", fontSize:13, fontWeight:600, cursor:"pointer", ...s }}>{children}</button>;
+}
+
+function Card({ children, s, accent }) {
+  return <div style={{ background:C.surf, border:`1px solid ${C.bord}`, borderRadius:16, overflow:"hidden", boxShadow: accent ? `0 4px 18px ${hex2rgb(accent,0.12)}` : "0 2px 10px rgba(28,27,38,0.04)", ...s }}>{children}</div>;
+}
+
+function Hdr({ children, accent }) {
+  return <div style={{ padding:"10px 16px", borderBottom:`1px solid ${C.line}`, background:accent?hex2rgb(accent,0.06):hex2rgb(C.deep,0.5), fontSize:10.5, fontWeight:700, color:accent||C.sub, letterSpacing:"0.08em", textTransform:"uppercase" }}>{children}</div>;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   INTERACTIVE PRICE CHART
+═══════════════════════════════════════════════════════════════════════════ */
+function PriceChart({ chart, color, timeframe, onTF }) {
+  const svgRef = useRef(null);
+  const [hov, setHov] = useState(null);
+  const TFs = ["1M","3M","6M","1Y","3Y"];
+  const months = {"1M":1,"3M":3,"6M":6,"1Y":12,"3Y":36}[timeframe]||12;
+  const data = chart.slice(-months);
+  const max = Math.max(...data.map(p=>p.max),1);
+  const min = Math.min(...data.map(p=>p.min),max);
+  const rng = max-min||1; const pad = rng*0.12;
+  const yMax = max+pad, yMin = Math.max(0,min-pad);
+  const pts = data.map((p,i)=>({ x:data.length>1?(i/(data.length-1))*96+2:50, y:100-((p.avg-yMin)/(yMax-yMin||1))*88-2, d:p }));
+  const linePath = "M"+pts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join("L");
+  const areaPath = linePath+` L${pts[pts.length-1]?.x||0},102 L${pts[0]?.x||0},102 Z`;
+  const gid = `g${color.replace(/[^a-z0-9]/gi,"_")}`;
+
+  const onMove = e => {
+    const svg = svgRef.current; if(!svg||!pts.length) return;
+    const rect = svg.getBoundingClientRect();
+    const cx = ((e.touches?e.touches[0].clientX:e.clientX)-rect.left)/rect.width*100;
+    let ni=0, nd=Infinity;
+    pts.forEach((p,i)=>{ const d=Math.abs(p.x-cx); if(d<nd){nd=d;ni=i;} });
+    setHov(ni);
+  };
+
+  const hp = hov!==null?pts[hov]:null;
 
   return (
     <div>
-      {/* Timeframe selector */}
-      <div style={{
-        display: "flex", gap: 4, padding: "0 14px 10px",
-      }}>
-        {TIMEFRAMES.map(tf => (
-          <button key={tf} onClick={() => onTimeframeChange(tf)} style={{
-            flex: 1, background: timeframe === tf ? color : "transparent",
-            color: timeframe === tf ? "#fff" : P.sub,
-            border: `1px solid ${timeframe === tf ? color : P.border}`,
-            borderRadius: 8, padding: "6px 4px",
-            fontSize: 11, fontWeight: 600, cursor: "pointer",
-          }}>{tf}</button>
+      <div style={{ display:"flex", gap:4, padding:"0 14px 10px" }}>
+        {TFs.map(tf=>(
+          <button key={tf} onClick={()=>onTF(tf)} style={{ flex:1, background:timeframe===tf?color:"transparent", color:timeframe===tf?"#fff":C.sub, border:`1px solid ${timeframe===tf?color:C.bord}`, borderRadius:8, padding:"6px 2px", fontSize:11, fontWeight:600, cursor:"pointer" }}>{tf}</button>
         ))}
       </div>
-
-      {/* Chart */}
-      <div style={{ position: "relative", padding: "0 12px" }}>
-        {hoverData && (
-          <div style={{
-            position: "absolute", top: -50,
-            left: `calc(${hoverPoint.x}% + 8px)`,
-            transform: "translateX(-50%)",
-            background: P.ink, color: "#fff",
-            padding: "7px 11px", borderRadius: 9,
-            fontSize: 11, whiteSpace: "nowrap",
-            boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
-            pointerEvents: "none", zIndex: 10,
-          }}>
-            <div style={{ fontWeight: 700, marginBottom: 2 }}>{fmtTHB(hoverData.avgTHB)}</div>
-            <div style={{ fontSize: 10, opacity: 0.75 }}>{hoverData.month}  ·  n={hoverData.count}</div>
+      <div style={{ position:"relative", padding:"32px 14px 0" }}>
+        {hp && (
+          <div style={{ position:"absolute", top:0, left:`clamp(10px, ${hp.x}%, calc(100% - 120px))`, background:C.ink, color:"#fff", padding:"6px 10px", borderRadius:9, fontSize:11, whiteSpace:"nowrap", pointerEvents:"none", zIndex:10 }}>
+            <div style={{ fontWeight:700 }}>{fmtTHB(hp.d.avg)}</div>
+            <div style={{ opacity:.7, fontSize:10 }}>{hp.d.month} · {hp.d.n} sales</div>
           </div>
         )}
-        <svg
-          ref={svgRef}
-          viewBox={`0 0 ${W} ${H}`}
-          style={{ width: "100%", height: 160, touchAction: "none", cursor: "crosshair" }}
-          preserveAspectRatio="none"
-          onMouseMove={handleMove}
-          onTouchMove={handleMove}
-          onMouseLeave={() => setHoverIdx(null)}
-          onTouchEnd={() => setTimeout(() => setHoverIdx(null), 1500)}
-        >
+        <svg ref={svgRef} viewBox="0 0 100 102" style={{ width:"100%", height:150, cursor:"crosshair", touchAction:"none" }} preserveAspectRatio="none"
+          onMouseMove={onMove} onTouchMove={onMove} onMouseLeave={()=>setHov(null)} onTouchEnd={()=>setTimeout(()=>setHov(null),1800)}>
           <defs>
             <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity="0.24"/>
+              <stop offset="0%" stopColor={color} stopOpacity=".22"/>
               <stop offset="100%" stopColor={color} stopOpacity="0"/>
             </linearGradient>
           </defs>
           <path d={areaPath} fill={`url(#${gid})`}/>
           <path d={linePath} fill="none" stroke={color} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-          {pts.map((p, i) => (
-            <circle
-              key={i} cx={p.x} cy={p.y}
-              r={hoverIdx === i ? 2.6 : 1.6}
-              fill={color}
-              style={{ transition: "r 0.15s" }}
-            />
-          ))}
-          {hoverPoint && (
-            <line
-              x1={hoverPoint.x} y1="0"
-              x2={hoverPoint.x} y2={H}
-              stroke={color} strokeWidth="0.3" strokeDasharray="2,2" opacity="0.5"
-            />
-          )}
+          {pts.map((p,i)=><circle key={i} cx={p.x} cy={p.y} r={hov===i?2.8:1.6} fill={color}/>)}
+          {hp && <line x1={hp.x} y1="0" x2={hp.x} y2="102" stroke={color} strokeWidth=".4" strokeDasharray="2,2" opacity=".5"/>}
         </svg>
       </div>
-
-      {/* X-axis labels */}
-      <div style={{
-        display: "flex", justifyContent: "space-between",
-        padding: "4px 14px 0", fontSize: 9, color: P.dim,
-      }}>
-        {filtered.length > 0 && (
-          <>
-            <span>{filtered[0]?.month}</span>
-            <span>{filtered[Math.floor(filtered.length / 2)]?.month}</span>
-            <span>{filtered[filtered.length - 1]?.month}</span>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   SALES LIST (scrollable, sorted newest-first, 3yr limit)
-═══════════════════════════════════════════════════════════════════════════ */
-function SalesList({ sales, sourceFilter, onFilter }) {
-  const threeYearsAgo = new Date();
-  threeYearsAgo.setFullYear(threeYearsAgo.getFullYear() - 3);
-  const filtered = sales
-    .filter(s => new Date(s.date) >= threeYearsAgo)
-    .filter(s => !sourceFilter || s.sourceId === sourceFilter)
-    .slice(0, 80); // cap for perf
-
-  const uniqueSources = [...new Set(sales.map(s => s.sourceId))];
-
-  return (
-    <div>
-      {/* Source filter */}
-      <div style={{
-        display: "flex", gap: 5, overflowX: "auto",
-        padding: "10px 14px", borderBottom: `1px solid ${P.line}`,
-      }}>
-        <button onClick={() => onFilter(null)} style={{
-          background: !sourceFilter ? P.peachDp : "transparent",
-          color: !sourceFilter ? "#fff" : P.sub,
-          border: `1px solid ${!sourceFilter ? P.peachDp : P.border}`,
-          borderRadius: 8, padding: "5px 11px", fontSize: 11, fontWeight: 600,
-          whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer",
-        }}>All</button>
-        {uniqueSources.map(sid => {
-          const src = SOURCES.find(s => s.id === sid);
-          if (!src) return null;
-          return (
-            <button key={sid} onClick={() => onFilter(sid)} style={{
-              background: sourceFilter === sid ? src.color : "transparent",
-              color: sourceFilter === sid ? "#fff" : P.sub,
-              border: `1px solid ${sourceFilter === sid ? src.color : P.border}`,
-              borderRadius: 8, padding: "5px 11px", fontSize: 11, fontWeight: 600,
-              whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer",
-            }}>{src.icon} {src.name}</button>
-          );
-        })}
-      </div>
-
-      {/* Sales list */}
-      <div style={{ maxHeight: 280, overflowY: "auto" }}>
-        {filtered.length === 0 ? (
-          <div style={{ padding: "26px 14px", textAlign: "center", color: P.dim, fontSize: 13 }}>
-            No sales match filter
-          </div>
-        ) : (
-          filtered.map((s, i) => (
-            <div key={i} style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "10px 16px",
-              borderBottom: i < filtered.length - 1 ? `1px solid ${P.line}` : "none",
-            }}>
-              <div>
-                <div style={{ fontSize: 11, color: s.sourceColor, fontWeight: 600, marginBottom: 2 }}>
-                  {s.sourceName}
-                </div>
-                <div style={{ fontSize: 12, color: P.sub }} className="mono">
-                  {s.date}
-                </div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div className="display" style={{ fontSize: 15, fontWeight: 700, color: P.ink }}>
-                  {fmtTHB(s.priceTHB)}
-                </div>
-                <div style={{ fontSize: 11, color: P.dim }} className="mono">
-                  {fmtUSD(s.priceUSD)} · {s.currency === "JPY" ? fmtJPY(s.price) : s.currency === "USD" ? fmtUSD(s.price) : fmtTHB(s.price)}
-                </div>
-              </div>
-            </div>
-          ))
-        )}
+      <div style={{ display:"flex", justifyContent:"space-between", padding:"4px 14px 0", fontSize:9, color:C.dim }}>
+        {data.length>0&&<><span>{data[0]?.month}</span><span>{data[Math.floor(data.length/2)]?.month}</span><span>{data[data.length-1]?.month}</span></>}
       </div>
     </div>
   );
@@ -989,118 +524,74 @@ function SalesList({ sales, sourceFilter, onFilter }) {
    SCREEN: LOGIN
 ═══════════════════════════════════════════════════════════════════════════ */
 function LoginScreen({ onLogin }) {
-  const [guestMode, setGuestMode] = useState(false);
-  const [wmName, setWmName] = useState("");
-  const [err, setErr] = useState("");
+  const [guest, setGuest] = useState(false);
+  const [name, setName]   = useState("");
+  const [err, setErr]     = useState("");
 
   const socials = [
-    { id: "facebook",  label: "Continue with Facebook",  icon: "f", bg: "#1877F2", text: "#fff" },
-    { id: "google",    label: "Continue with Google",    icon: "G", bg: "#fff", text: "#3C4043", border: true },
-    { id: "instagram", label: "Continue with Instagram", icon: "◉", bg: "linear-gradient(135deg,#F58529,#DD2A7B,#8134AF)", text: "#fff" },
+    { id:"facebook",  label:"Continue with Facebook",  icon:"f", bg:"#1877F2", text:"#fff" },
+    { id:"google",    label:"Continue with Google",    icon:"G", bg:"#fff",    text:"#3C4043", bord:true },
+    { id:"instagram", label:"Continue with Instagram", icon:"◉", bg:"linear-gradient(135deg,#F58529,#DD2A7B,#8134AF)", text:"#fff" },
   ];
 
-  const social = id => {
-    const names = { facebook: "FB_" + Math.random().toString(36).slice(2,6), google: "Google_" + Math.random().toString(36).slice(2,6), instagram: "IG_" + Math.random().toString(36).slice(2,6) };
-    onLogin({ name: names[id], provider: id, verified: true });
+  const goSocial = id => {
+    const n={facebook:"FB_"+Math.random().toString(36).slice(2,6),google:"G_"+Math.random().toString(36).slice(2,6),instagram:"IG_"+Math.random().toString(36).slice(2,6)};
+    onLogin({ name:n[id], provider:id, verified:true });
   };
-
-  const guest = () => {
-    if (!wmName.trim()) return setErr("Enter your watermark name");
-    if (wmName.trim().length < 2) return setErr("Minimum 2 characters");
-    setErr("");
-    onLogin({ name: wmName.trim(), provider: "guest", verified: false });
+  const goGuest = () => {
+    if(!name.trim()||name.trim().length<2) return setErr("Enter at least 2 characters");
+    onLogin({ name:name.trim(), provider:"guest", verified:false });
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: P.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 22px", position: "relative" }}>
+    <div style={{ minHeight:"100vh", background:C.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 22px", position:"relative", overflow:"hidden" }}>
       <style>{CSS}</style>
-
-      <div style={{ position: "fixed", inset: 0, pointerEvents: "none", overflow: "hidden", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: "-15%", left: "-15%", width: "50%", height: "50%", background: toRgba(P.peach, 0.18), borderRadius: "50%", filter: "blur(60px)" }}/>
-        <div style={{ position: "absolute", bottom: "-20%", right: "-20%", width: "60%", height: "60%", background: toRgba(P.lavender, 0.22), borderRadius: "50%", filter: "blur(70px)" }}/>
+      <div style={{ position:"fixed", inset:0, pointerEvents:"none" }}>
+        <div style={{ position:"absolute", top:"-15%", left:"-15%", width:"55%", height:"50%", background:hex2rgb(C.peach,.18), borderRadius:"50%", filter:"blur(70px)" }}/>
+        <div style={{ position:"absolute", bottom:"-20%", right:"-20%", width:"65%", height:"55%", background:hex2rgb(C.lav,.2), borderRadius:"50%", filter:"blur(80px)" }}/>
       </div>
 
-      <div style={{ width: "100%", maxWidth: 380, position: "relative", zIndex: 1 }}>
-        <div className="fu1" style={{ textAlign: "center", marginBottom: 30 }}>
-          <div style={{
-            width: 68, height: 68, borderRadius: 20,
-            background: `linear-gradient(135deg, ${P.peach}, ${P.coral})`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            margin: "0 auto 16px", boxShadow: `0 12px 32px ${toRgba(P.peachDp, 0.35)}`,
-          }}>
-            <span style={{ fontSize: 32, color: "#fff" }}>◆</span>
+      <div style={{ width:"100%", maxWidth:370, position:"relative", zIndex:1 }}>
+        <div className="r1" style={{ textAlign:"center", marginBottom:28 }}>
+          <div style={{ width:70, height:70, borderRadius:21, background:`linear-gradient(135deg,${C.peach},${C.coral})`, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px", boxShadow:`0 12px 32px ${hex2rgb(C.coral,.35)}` }}>
+            <span style={{ fontSize:32, color:"#fff" }}>◆</span>
           </div>
-          <div className="display" style={{ fontSize: 34, fontWeight: 700, marginBottom: 4 }}>
-            BoBoa<span style={{ color: P.peachDp }}>-TCGScan</span>
-          </div>
-          <div style={{ fontSize: 13.5, color: P.sub }}>
-            Scan · Identify · Price · Grade
-          </div>
+          <div className="syne" style={{ fontSize:32, fontWeight:800, marginBottom:4 }}>BoBoa <span style={{ color:C.peachDk }}>Scanner</span></div>
+          <div style={{ fontSize:13.5, color:C.sub }}>Scan · Identify · Grade · Price</div>
         </div>
 
-        {!guestMode ? (
+        {!guest ? (
           <>
-            <div className="fu2" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {socials.map(s => (
-                <button key={s.id} onClick={() => social(s.id)} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  background: s.bg, color: s.text,
-                  border: s.border ? `1px solid ${P.border}` : "none",
-                  borderRadius: 13, padding: "12px 18px",
-                  fontSize: 14.5, fontWeight: 600,
-                  cursor: "pointer", boxShadow: "0 4px 14px rgba(31,30,42,0.06)",
-                }}>
-                  <div style={{
-                    width: 26, height: 26, borderRadius: 7,
-                    background: s.border ? "#4285F4" : "rgba(255,255,255,0.22)",
-                    color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 15, fontWeight: 800, flexShrink: 0,
-                  }}>{s.icon}</div>
-                  <span style={{ flex: 1, textAlign: "left" }}>{s.label}</span>
+            <div className="r2" style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {socials.map(s=>(
+                <button key={s.id} onClick={()=>goSocial(s.id)} style={{ display:"flex", alignItems:"center", gap:12, background:s.bg, color:s.text, border:s.bord?`1px solid ${C.bord}`:"none", borderRadius:13, padding:"12px 18px", fontSize:14.5, fontWeight:600, cursor:"pointer", boxShadow:"0 4px 14px rgba(28,27,38,0.06)" }}>
+                  <div style={{ width:26, height:26, borderRadius:7, background:s.bord?"#4285F4":"rgba(255,255,255,.22)", color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:800 }}>{s.icon}</div>
+                  <span style={{ flex:1, textAlign:"left" }}>{s.label}</span>
                 </button>
               ))}
             </div>
-
-            <div className="fu3" style={{ display: "flex", alignItems: "center", gap: 12, margin: "22px 0" }}>
-              <div style={{ flex: 1, height: 1, background: P.border }}/>
-              <span style={{ fontSize: 11, color: P.dim, letterSpacing: "0.08em" }}>OR</span>
-              <div style={{ flex: 1, height: 1, background: P.border }}/>
+            <div className="r3" style={{ display:"flex", alignItems:"center", gap:12, margin:"20px 0" }}>
+              <div style={{ flex:1, height:1, background:C.bord }}/><span style={{ fontSize:11, color:C.dim, letterSpacing:"0.08em" }}>OR</span><div style={{ flex:1, height:1, background:C.bord }}/>
             </div>
-
-            <button className="fu3" onClick={() => setGuestMode(true)} style={{
-              width: "100%", background: "transparent",
-              border: `1.5px dashed ${P.border}`, borderRadius: 13,
-              padding: "13px", fontSize: 14, fontWeight: 600,
-              color: P.ink, cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            }}>
-              <span style={{ fontSize: 16 }}>👤</span> Continue as Guest
+            <button className="r3" onClick={()=>setGuest(true)} style={{ width:"100%", background:"transparent", border:`1.5px dashed ${C.bord}`, borderRadius:13, padding:"13px", fontSize:14, fontWeight:600, color:C.ink, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+              <span style={{ fontSize:16 }}>👤</span> Continue as Guest
             </button>
           </>
         ) : (
-          <div className="fu1">
-            <Card style={{ padding: 20 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 3 }}>Watermark Name</div>
-              <div style={{ fontSize: 12, color: P.sub, marginBottom: 14, lineHeight: 1.6 }}>
-                Stamped on every scan.
+          <div className="r1">
+            <Card>
+              <div style={{ padding:20 }}>
+                <div style={{ fontSize:13, fontWeight:700, marginBottom:3 }}>Your watermark name</div>
+                <div style={{ fontSize:12, color:C.sub, marginBottom:14, lineHeight:1.6 }}>Stamped on every scan at low opacity.</div>
+                <input autoFocus type="text" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. BoBoBoa" maxLength={20}
+                  style={{ width:"100%", background:C.bg, border:`1.5px solid ${C.bord}`, borderRadius:11, padding:"12px 14px", fontSize:15, color:C.ink, outline:"none", marginBottom:10 }}
+                  onKeyDown={e=>e.key==="Enter"&&goGuest()}
+                  onFocus={e=>e.target.style.borderColor=C.peachDk} onBlur={e=>e.target.style.borderColor=C.bord}/>
+                {name&&<div style={{ background:C.deep, borderRadius:9, padding:"8px 12px", marginBottom:10, fontSize:11.5, color:C.sub }}>Preview: <strong style={{ color:C.ink }}>{name} · {new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace(/ /g,"-")}</strong></div>}
+                {err&&<div style={{ background:hex2rgb(C.coral,.14), border:`1px solid ${hex2rgb(C.coral,.35)}`, borderRadius:9, padding:"8px 12px", fontSize:12, color:C.coral, marginBottom:10 }}>{err}</div>}
+                <PBtn onClick={goGuest}>Continue →</PBtn>
+                <button onClick={()=>{setGuest(false);setErr("");setName("");}} style={{ width:"100%", background:"transparent", border:"none", marginTop:8, padding:"6px", fontSize:12, color:C.sub, cursor:"pointer" }}>← Back</button>
               </div>
-              <input type="text" value={wmName} onChange={e => setWmName(e.target.value)}
-                placeholder="e.g. BoBoBoa" maxLength={20} autoFocus
-                style={{ width: "100%", background: P.bg, border: `1.5px solid ${P.border}`, borderRadius: 11, padding: "12px 14px", fontSize: 15, color: P.ink, outline: "none", marginBottom: 10 }}
-                onKeyDown={e => e.key === "Enter" && guest()}
-                onFocus={e => e.target.style.borderColor = P.peachDp}
-                onBlur={e => e.target.style.borderColor = P.border}/>
-              {wmName && (
-                <div style={{ background: P.bgDeep, borderRadius: 9, padding: "8px 12px", marginBottom: 12, fontSize: 11.5, color: P.sub }}>
-                  Preview: <span style={{ color: P.ink, fontWeight: 600 }}>{wmName} · {new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace(/ /g,"-")}</span>
-                </div>
-              )}
-              {err && <div style={{ background: toRgba(P.coral,0.14), border: `1px solid ${toRgba(P.coral,0.35)}`, borderRadius: 9, padding: "8px 12px", fontSize: 12, color: P.coral, marginBottom: 10 }}>{err}</div>}
-              <PrimaryBtn onClick={guest}>Continue →</PrimaryBtn>
-              <button onClick={() => { setGuestMode(false); setErr(""); setWmName(""); }} style={{
-                width: "100%", background: "transparent", border: "none",
-                marginTop: 8, padding: "6px", fontSize: 12, color: P.sub, cursor: "pointer",
-              }}>← Back</button>
             </Card>
           </div>
         )}
@@ -1110,283 +601,270 @@ function LoginScreen({ onLogin }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SCREEN: WELCOME + PRE-SCAN PICKER (TCG type + Language)
+   SCREEN: WELCOME — TCG + Language pickers
 ═══════════════════════════════════════════════════════════════════════════ */
 function WelcomeScreen({ user, onStart, onLogout }) {
-  const [tcgType, setTcgType] = useState("onepiece");
-  const [language, setLanguage] = useState("JP");
+  const [tcg, setTcg] = useState("onepiece");
+  const [lang, setLang] = useState("JP");
 
   return (
-    <div style={{ minHeight: "100vh", background: P.bg, padding: "54px 20px 40px", position: "relative" }}>
+    <div style={{ minHeight:"100vh", background:C.bg, padding:"54px 20px 40px", position:"relative" }}>
       <style>{CSS}</style>
-
-      <div style={{ position: "fixed", inset: 0, pointerEvents: "none", overflow: "hidden", zIndex: 0 }}>
-        <div style={{ position: "absolute", top: "10%", right: "-20%", width: "55%", height: "40%", background: toRgba(P.butter, 0.25), borderRadius: "50%", filter: "blur(80px)" }}/>
-        <div style={{ position: "absolute", bottom: "0%", left: "-15%", width: "45%", height: "35%", background: toRgba(P.sky, 0.22), borderRadius: "50%", filter: "blur(70px)" }}/>
+      <div style={{ position:"fixed", inset:0, pointerEvents:"none", overflow:"hidden" }}>
+        <div style={{ position:"absolute", top:"5%", right:"-20%", width:"55%", height:"40%", background:hex2rgb(C.butter,.22), borderRadius:"50%", filter:"blur(80px)" }}/>
+        <div style={{ position:"absolute", bottom:0, left:"-15%", width:"45%", height:"35%", background:hex2rgb(C.sky,.2), borderRadius:"50%", filter:"blur(70px)" }}/>
       </div>
 
-      <div style={{ position: "relative", zIndex: 1, maxWidth: 430, margin: "0 auto" }}>
-
-        {/* User badge */}
-        <div className="fu1" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 26 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              width: 34, height: 34, borderRadius: "50%",
-              background: `linear-gradient(135deg, ${P.peach}, ${P.rose})`,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: "#fff", fontSize: 13.5, fontWeight: 700,
-            }}>{user.name[0].toUpperCase()}</div>
+      <div style={{ position:"relative", zIndex:1, maxWidth:430, margin:"0 auto" }}>
+        <div className="r1" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:28 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <div style={{ width:34, height:34, borderRadius:"50%", background:`linear-gradient(135deg,${C.peach},${C.rose})`, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:13, fontWeight:700 }}>{user.name[0].toUpperCase()}</div>
             <div>
-              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{user.name}</div>
-              <div style={{ fontSize: 10, color: P.dim, textTransform: "capitalize" }}>
-                {user.verified ? `✓ ${user.provider}` : "Guest"}
-              </div>
+              <div style={{ fontSize:12.5, fontWeight:600 }}>{user.name}</div>
+              <div style={{ fontSize:10, color:C.dim, textTransform:"capitalize" }}>{user.verified?`✓ ${user.provider}`:"Guest"}</div>
             </div>
           </div>
-          <SmallBtn onClick={onLogout}>Sign out</SmallBtn>
+          <SBtn onClick={onLogout}>Sign out</SBtn>
         </div>
 
-        <div className="fu2" style={{ marginBottom: 26 }}>
-          <div className="display" style={{ fontSize: 34, fontWeight: 700, lineHeight: 1.05, marginBottom: 8 }}>
-            Scan a card<br/>
-            <span style={{ color: P.peachDp }}>in seconds.</span>
+        <div className="r2" style={{ marginBottom:26 }}>
+          <div className="syne" style={{ fontSize:34, fontWeight:800, lineHeight:1.05, marginBottom:8 }}>
+            Scan a card<br/><span style={{ color:C.peachDk }}>instantly.</span>
           </div>
-          <div style={{ fontSize: 14, color: P.sub, lineHeight: 1.55 }}>
-            BoBoa AI reads the card number, name, rarity and language — then pulls prices from multiple sources.
-          </div>
+          <div style={{ fontSize:13.5, color:C.sub, lineHeight:1.6 }}>BoBoa AI identifies the card, grades the condition, and pulls prices from 7 sources in THB · USD · JPY.</div>
         </div>
 
-        {/* TCG Type picker */}
-        <div className="fu3" style={{ marginBottom: 18 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: P.sub, marginBottom: 9, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            Step 1 · Choose TCG
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-            {TCG_TYPES.map(t => {
-              const sel = tcgType === t.id;
-              return (
-                <button key={t.id} onClick={() => setTcgType(t.id)} style={{
-                  background: sel ? t.color : P.surface,
-                  color: sel ? "#fff" : P.ink,
-                  border: `1.5px solid ${sel ? t.color : P.border}`,
-                  borderRadius: 14, padding: "14px 10px",
-                  cursor: "pointer", textAlign: "center",
-                  boxShadow: sel ? `0 6px 16px ${toRgba(t.color, 0.3)}` : "none",
-                  transition: "all 0.15s",
-                }}>
-                  <div style={{ fontSize: 24, marginBottom: 4 }}>{t.emoji}</div>
-                  <div style={{ fontSize: 12.5, fontWeight: 700 }}>{t.name}</div>
-                </button>
-              );
+        <div className="r3" style={{ marginBottom:18 }}>
+          <div style={{ fontSize:10.5, fontWeight:700, color:C.sub, marginBottom:8, letterSpacing:"0.1em", textTransform:"uppercase" }}>Step 1 · Choose TCG</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+            {TCG_TYPES.map(t=>{
+              const sel=tcg===t.id;
+              return <button key={t.id} onClick={()=>setTcg(t.id)} style={{ background:sel?t.color:C.surf, color:sel?"#fff":C.ink, border:`1.5px solid ${sel?t.color:C.bord}`, borderRadius:14, padding:"14px 8px", cursor:"pointer", textAlign:"center", boxShadow:sel?`0 6px 16px ${hex2rgb(t.color,.3)}`:"none", transition:"all .15s" }}>
+                <div style={{ fontSize:24, marginBottom:4 }}>{t.emoji}</div>
+                <div style={{ fontSize:12, fontWeight:700 }}>{t.name}</div>
+              </button>;
             })}
           </div>
         </div>
 
-        {/* Language picker */}
-        <div className="fu3" style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: P.sub, marginBottom: 9, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            Step 2 · Card language
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-            {LANGUAGES.map(l => {
-              const sel = language === l.id;
-              return (
-                <button key={l.id} onClick={() => setLanguage(l.id)} style={{
-                  background: sel ? P.ink : P.surface,
-                  color: sel ? "#fff" : P.ink,
-                  border: `1.5px solid ${sel ? P.ink : P.border}`,
-                  borderRadius: 13, padding: "11px 6px",
-                  cursor: "pointer", textAlign: "center",
-                }}>
-                  <div style={{ fontSize: 22, marginBottom: 3 }}>{l.flag}</div>
-                  <div style={{ fontSize: 12, fontWeight: 600 }}>{l.label}</div>
-                </button>
-              );
+        <div className="r3" style={{ marginBottom:24 }}>
+          <div style={{ fontSize:10.5, fontWeight:700, color:C.sub, marginBottom:8, letterSpacing:"0.1em", textTransform:"uppercase" }}>Step 2 · Card language</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+            {LANGUAGES.map(l=>{
+              const sel=lang===l.id;
+              return <button key={l.id} onClick={()=>setLang(l.id)} style={{ background:sel?C.ink:C.surf, color:sel?"#fff":C.ink, border:`1.5px solid ${sel?C.ink:C.bord}`, borderRadius:13, padding:"11px 6px", cursor:"pointer", textAlign:"center" }}>
+                <div style={{ fontSize:22, marginBottom:3 }}>{l.flag}</div>
+                <div style={{ fontSize:12, fontWeight:600 }}>{l.label}</div>
+              </button>;
             })}
           </div>
         </div>
 
-        {/* Start button */}
-        <div className="fu4">
-          <PrimaryBtn onClick={() => onStart({ tcgType, language })} style={{ padding: "14px 20px", fontSize: 15.5 }}>
-            <span style={{ fontSize: 18 }}>📷</span> Start Scan
-          </PrimaryBtn>
-          <div style={{ textAlign: "center", marginTop: 10, fontSize: 11, color: P.dim }}>
-            Watermark: <span className="mono" style={{ color: P.sub }}>
-              {user.name} · {new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace(/ /g,"-")}
-            </span>
+        <div className="r4">
+          <PBtn onClick={()=>onStart({tcg,lang})} s={{ padding:"15px 20px", fontSize:15.5 }}>
+            <span style={{ fontSize:18 }}>📷</span> Scan or Upload a Card
+          </PBtn>
+          <div style={{ textAlign:"center", marginTop:10, fontSize:11, color:C.dim }}>
+            Watermark: <span className="mono" style={{ color:C.sub }}>{user.name} · {new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace(/ /g,"-")}</span>
           </div>
         </div>
-
       </div>
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SCREEN: CAMERA — frame-matched capture
-   Uses getBoundingClientRect() on the guide div to know EXACTLY what's inside.
+   SCREEN: CAPTURE — Camera OR Upload
 ═══════════════════════════════════════════════════════════════════════════ */
-function CameraScreen({ user, onCapture, onBack, ctx }) {
+function CaptureScreen({ user, ctx, onCapture, onBack }) {
   const videoRef  = useRef(null);
   const frameRef  = useRef(null);
   const streamRef = useRef(null);
+  const fileRef   = useRef(null);
+  const [mode,   setMode]   = useState("camera"); // "camera" | "upload"
   const [status, setStatus] = useState("starting");
   const [errMsg, setErrMsg] = useState("");
   const [flash,  setFlash]  = useState(false);
 
   const stopCam = () => {
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    if(streamRef.current){ streamRef.current.getTracks().forEach(t=>t.stop()); streamRef.current=null; }
   };
 
   const startCam = useCallback(async () => {
-    setStatus("starting");
+    setStatus("starting"); setErrMsg("");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" }, audio: false,
+        video:{
+          facingMode:"environment",
+          width:{ ideal:4032 },       // max quality — iPhone 12MP/48MP
+          height:{ ideal:3024 },
+          focusMode:"continuous",      // continuous autofocus
+        },
+        audio:false,
       });
       streamRef.current = stream;
       const v = videoRef.current;
-      if (v) {
+      if(v){
         v.srcObject = stream;
-        v.setAttribute("playsinline", "true");
+        v.setAttribute("playsinline","true");
         v.muted = true;
-        v.onloadedmetadata = () => {
-          v.play().then(() => setStatus("live")).catch(e => { setErrMsg("Video: " + e.message); setStatus("error"); });
-        };
+        v.onloadedmetadata = () => v.play().then(()=>setStatus("live")).catch(e=>{setErrMsg("Video: "+e.message);setStatus("error");});
       }
-    } catch (e) {
-      setErrMsg(e.name === "NotAllowedError"
-        ? "Camera permission denied.\n\nFix: iPhone Settings → Safari → Camera → Allow"
-        : "Camera: " + e.message);
+    } catch(e) {
+      setErrMsg(e.name==="NotAllowedError"?"Camera denied.\n\niPhone: Settings → Safari → Camera → Allow":"Camera: "+e.message);
       setStatus("error");
     }
   }, []);
 
-  useEffect(() => { startCam(); return stopCam; }, [startCam]);
+  useEffect(() => {
+    if(mode==="camera") startCam();
+    return stopCam;
+  }, [mode, startCam]);
+
+  const dateStr = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace(/ /g,"-");
+  const watermark = `${user.name} · ${dateStr}`;
 
   const capture = () => {
-    const v = videoRef.current, f = frameRef.current;
-    if (!v || !f || status !== "live") return;
-
-    setFlash(true);
-    setTimeout(() => setFlash(false), 150);
-
-    // Get frame rect relative to video element
-    const vRect = v.getBoundingClientRect();
-    const fRect = f.getBoundingClientRect();
-    const displayedFrame = {
-      left:   fRect.left - vRect.left,
-      top:    fRect.top  - vRect.top,
-      width:  fRect.width,
-      height: fRect.height,
-    };
-
-    const dateStr = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}).replace(/ /g,"-");
-    const watermark = `${user.name} · ${dateStr}`;
-
-    const result = captureFramedCard({ video: v, displayedFrame, watermark });
+    const v=videoRef.current, f=frameRef.current;
+    if(!v||!f||status!=="live") return;
+    setFlash(true); setTimeout(()=>setFlash(false),150);
+    const result = captureCard({video:v, frameEl:f, watermark});
     stopCam();
     onCapture(result);
   };
 
-  const tcg = TCG_TYPES.find(t => t.id === ctx.tcgType);
-  const lang = LANGUAGES.find(l => l.id === ctx.language);
+  const handleUpload = e => {
+    const file = e.target.files?.[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      // Draw to canvas to apply watermark consistently
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        // Preserve full resolution
+        canvas.width  = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx2 = canvas.getContext("2d");
+        ctx2.drawImage(img, 0, 0);
+
+        // Watermark
+        const fw = canvas.width, fh = canvas.height;
+        const fs = Math.max(14, Math.round(fw * 0.022));
+        ctx2.font = `500 ${fs}px 'DM Sans', sans-serif`;
+        const tw = ctx2.measureText(watermark).width;
+        const pad = Math.round(fw * 0.016);
+        ctx2.save();
+        ctx2.globalAlpha = 0.36;
+        ctx2.fillStyle = "rgba(0,0,0,0.5)";
+        ctx2.beginPath(); ctx2.roundRect(fw-tw-pad*3, fh-fs-pad*1.8, tw+pad*2.4, fs+pad*1.2, 6); ctx2.fill();
+        ctx2.globalAlpha = 0.72;
+        ctx2.fillStyle = "#fff";
+        ctx2.fillText(watermark, fw-tw-pad*1.8, fh-pad*0.8);
+        ctx2.restore();
+
+        // 4-corner grid from full image
+        const cpct=0.28, ccw=Math.round(fw*cpct), cch=Math.round(fh*cpct);
+        const corners=[{label:"TL",sx:0,sy:0},{label:"TR",sx:fw-ccw,sy:0},{label:"BL",sx:0,sy:fh-cch},{label:"BR",sx:fw-ccw,sy:fh-cch}];
+        const gap=5;
+        const grid=document.createElement("canvas");
+        grid.width=ccw*2+gap*3; grid.height=cch*2+gap*3;
+        const gc=grid.getContext("2d");
+        gc.fillStyle="#1C1B26"; gc.fillRect(0,0,grid.width,grid.height);
+        corners.forEach((c,i)=>{
+          const col=i%2,row=Math.floor(i/2),dx=gap+col*(ccw+gap),dy=gap+row*(cch+gap);
+          gc.drawImage(canvas,c.sx,c.sy,ccw,cch,dx,dy,ccw,cch);
+          const ls=Math.round(cch*0.10);
+          gc.fillStyle="rgba(240,158,122,0.9)";
+          gc.beginPath();gc.roundRect(dx+5,dy+5,ls*2.4,ls*1.5,4);gc.fill();
+          gc.fillStyle="#fff";gc.font=`700 ${ls}px monospace`;
+          gc.fillText(c.label,dx+9,dy+ls*1.2);
+        });
+
+        onCapture({ full: canvas.toDataURL("image/jpeg", 0.97), corners: grid.toDataURL("image/jpeg",0.92) });
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const tcg = TCG_TYPES.find(t=>t.id===ctx.tcg);
+  const lang = LANGUAGES.find(l=>l.id===ctx.lang);
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#000", display: "flex", flexDirection: "column" }}>
+    <div style={{ position:"fixed", inset:0, background:"#000", display:"flex", flexDirection:"column" }}>
       <style>{CSS}</style>
 
-      <video ref={videoRef} playsInline muted autoPlay style={{
-        position: "absolute", inset: 0, width: "100%", height: "100%",
-        objectFit: "cover", display: status === "live" ? "block" : "none",
-      }}/>
-
-      {flash && <div style={{ position: "absolute", inset: 0, background: "#fff", opacity: 0.85, zIndex: 20 }}/>}
-
-      {status === "starting" && (
-        <div style={{ position: "absolute", inset: 0, background: P.inkDark, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
-          <div style={{ width: 50, height: 50, border: `3px solid ${P.peach}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }}/>
-          <div style={{ color: "#fff", fontSize: 15, fontWeight: 600 }}>Opening camera…</div>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", textAlign: "center", padding: "0 40px", lineHeight: 1.7 }}>
-            Tap <strong style={{color:"#fff"}}>Allow</strong> for camera access
-          </div>
+      {/* Mode toggle at top */}
+      <div style={{ position:"absolute", top:0, left:0, right:0, zIndex:10, padding:"48px 18px 10px", background:"linear-gradient(to bottom,rgba(0,0,0,0.7),transparent)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <button onClick={()=>{stopCam();onBack();}} style={{ background:"rgba(255,255,255,.16)", border:"1px solid rgba(255,255,255,.22)", borderRadius:11, padding:"7px 13px", fontSize:13, fontWeight:600, color:"#fff", cursor:"pointer" }}>← Back</button>
+        <div style={{ display:"flex", background:"rgba(0,0,0,.4)", borderRadius:11, padding:3, gap:2 }}>
+          <button onClick={()=>{if(mode!=="camera"){stopCam();setMode("camera");}}} style={{ background:mode==="camera"?"rgba(255,255,255,.22)":"transparent", border:"none", borderRadius:9, padding:"6px 14px", fontSize:12, fontWeight:600, color:"#fff", cursor:"pointer" }}>📷 Camera</button>
+          <button onClick={()=>{stopCam();setMode("upload");}} style={{ background:mode==="upload"?"rgba(255,255,255,.22)":"transparent", border:"none", borderRadius:9, padding:"6px 14px", fontSize:12, fontWeight:600, color:"#fff", cursor:"pointer" }}>🖼 Upload</button>
         </div>
-      )}
-
-      {status === "error" && (
-        <div style={{ position: "absolute", inset: 0, background: P.inkDark, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px 24px", gap: 16, textAlign: "center" }}>
-          <div style={{ fontSize: 44 }}>📷</div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: P.coral }}>Camera Error</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.7, whiteSpace: "pre-line", maxWidth: 320 }}>{errMsg}</div>
-          <button onClick={startCam} style={{ background: P.peachDp, border: "none", borderRadius: 12, padding: "12px 28px", fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer", marginTop: 6 }}>Try Again</button>
-          <button onClick={() => { stopCam(); onBack(); }} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 12, padding: "10px 28px", fontSize: 13, color: "rgba(255,255,255,0.5)", cursor: "pointer" }}>← Back</button>
+        <div style={{ background:"rgba(255,255,255,.16)", border:"1px solid rgba(255,255,255,.22)", borderRadius:11, padding:"6px 10px", fontSize:11, color:"#fff", display:"flex", gap:5 }}>
+          <span>{tcg?.emoji}</span><span>{lang?.flag}</span>
         </div>
-      )}
+      </div>
 
-      {status === "live" && (
+      {/* Camera mode */}
+      {mode === "camera" && (
         <>
-          {/* Top bar with context */}
-          <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 5, padding: "50px 18px 14px", background: "linear-gradient(to bottom, rgba(0,0,0,0.55), transparent)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <button onClick={() => { stopCam(); onBack(); }} style={{
-              background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.22)",
-              borderRadius: 11, padding: "7px 13px", fontSize: 12.5, fontWeight: 600,
-              color: "#fff", cursor: "pointer", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)",
-            }}>← Back</button>
-            <div className="display" style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>BoBoa-TCGScan</div>
-            <div style={{
-              background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.22)",
-              borderRadius: 11, padding: "6px 10px", fontSize: 11, color: "#fff",
-              display: "flex", gap: 5, alignItems: "center",
-            }}>
-              <span>{tcg?.emoji}</span> <span>{lang?.flag}</span>
-            </div>
-          </div>
+          <video ref={videoRef} playsInline muted autoPlay style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", display:status==="live"?"block":"none" }}/>
+          {flash && <div style={{ position:"absolute", inset:0, background:"#fff", opacity:.85, zIndex:20 }}/>}
 
-          {/* Card frame guide — this IS the capture rect */}
-          <div style={{ position: "absolute", inset: 0, zIndex: 4, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div ref={frameRef} style={{
-              position: "relative",
-              width: "76%", maxWidth: 270,
-              aspectRatio: "63/88",
-            }}>
-              {/* Corner brackets */}
-              {[
-                { top: 0, left: 0,   borderTop: `3px solid ${P.peach}`, borderLeft: `3px solid ${P.peach}` },
-                { top: 0, right: 0,  borderTop: `3px solid ${P.peach}`, borderRight: `3px solid ${P.peach}` },
-                { bottom: 0, left: 0,  borderBottom: `3px solid ${P.peach}`, borderLeft: `3px solid ${P.peach}` },
-                { bottom: 0, right: 0, borderBottom: `3px solid ${P.peach}`, borderRight: `3px solid ${P.peach}` },
-              ].map((s,i) => <div key={i} style={{ position: "absolute", width: 30, height: 30, borderRadius: 4, ...s }}/>)}
-              {/* Dashed border */}
-              <div style={{ position: "absolute", inset: 0, border: `1.5px dashed ${toRgba(P.peach, 0.6)}`, borderRadius: 10 }}/>
-              {/* Scan line */}
-              <div style={{
-                position: "absolute", left: 4, right: 4, height: 2, top: "50%",
-                background: `linear-gradient(90deg, transparent, ${P.peach}, transparent)`,
-                boxShadow: `0 0 12px ${P.peach}`,
-                animation: "scanLine 2.2s ease-in-out infinite",
-              }}/>
+          {status==="starting" && (
+            <div style={{ position:"absolute", inset:0, background:C.dark, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16 }}>
+              <div style={{ width:50, height:50, border:`3px solid ${C.peach}`, borderTopColor:"transparent", borderRadius:"50%", animation:"spin .8s linear infinite" }}/>
+              <div style={{ color:"#fff", fontSize:15, fontWeight:600 }}>Opening camera…</div>
+              <div style={{ fontSize:12, color:"rgba(255,255,255,.5)", textAlign:"center", padding:"0 40px", lineHeight:1.7 }}>Tap <strong style={{color:"#fff"}}>Allow</strong> when prompted</div>
             </div>
-          </div>
-
-          {/* Bottom */}
-          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 5, padding: "16px 24px 40px", background: "linear-gradient(to top, rgba(0,0,0,0.75), transparent)" }}>
-            <div style={{ textAlign: "center", marginBottom: 14, fontSize: 12, color: "rgba(255,255,255,0.72)", lineHeight: 1.5 }}>
-              Fit the card inside the frame · Only the framed area is captured
+          )}
+          {status==="error" && (
+            <div style={{ position:"absolute", inset:0, background:C.dark, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"32px 24px", gap:14, textAlign:"center" }}>
+              <div style={{ fontSize:44 }}>📷</div>
+              <div style={{ fontSize:18, fontWeight:700, color:C.coral }}>Camera Error</div>
+              <div style={{ fontSize:13, color:"rgba(255,255,255,.6)", lineHeight:1.7, whiteSpace:"pre-line", maxWidth:320 }}>{errMsg}</div>
+              <button onClick={startCam} style={{ background:C.peachDk, border:"none", borderRadius:12, padding:"12px 28px", fontSize:14, fontWeight:700, color:"#fff", cursor:"pointer", marginTop:6 }}>Try Again</button>
+              <button onClick={()=>{stopCam();setMode("upload");}} style={{ background:"transparent", border:"1px solid rgba(255,255,255,.2)", borderRadius:12, padding:"10px 28px", fontSize:13, color:"rgba(255,255,255,.5)", cursor:"pointer" }}>Use Upload instead</button>
             </div>
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <button onClick={capture} style={{
-                width: 72, height: 72, borderRadius: "50%",
-                background: "#fff", border: "4px solid rgba(255,255,255,0.35)",
-                cursor: "pointer", padding: 0,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                boxShadow: "0 4px 24px rgba(0,0,0,0.4)",
-              }}>
-                <div style={{ width: 56, height: 56, borderRadius: "50%", background: `linear-gradient(135deg, ${P.peach}, ${P.peachDp})`, boxShadow: `0 0 18px ${toRgba(P.peachDp, 0.6)}` }}/>
-              </button>
-            </div>
-          </div>
+          )}
+          {status==="live" && (
+            <>
+              <div style={{ position:"absolute", inset:0, zIndex:4, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <div ref={frameRef} style={{ position:"relative", width:"78%", maxWidth:280, aspectRatio:"63/88" }}>
+                  {[{top:0,left:0,borderTop:`3px solid ${C.peach}`,borderLeft:`3px solid ${C.peach}`},{top:0,right:0,borderTop:`3px solid ${C.peach}`,borderRight:`3px solid ${C.peach}`},{bottom:0,left:0,borderBottom:`3px solid ${C.peach}`,borderLeft:`3px solid ${C.peach}`},{bottom:0,right:0,borderBottom:`3px solid ${C.peach}`,borderRight:`3px solid ${C.peach}`}].map((s,i)=><div key={i} style={{ position:"absolute", width:28, height:28, borderRadius:4, ...s }}/>)}
+                  <div style={{ position:"absolute", inset:0, border:`1.5px dashed ${hex2rgb(C.peach,.6)}`, borderRadius:10 }}/>
+                  <div style={{ position:"absolute", left:4, right:4, height:2, top:"50%", background:`linear-gradient(90deg,transparent,${C.peach},transparent)`, boxShadow:`0 0 12px ${C.peach}`, animation:"scanLine 2.2s ease-in-out infinite" }}/>
+                </div>
+              </div>
+              <div style={{ position:"absolute", bottom:0, left:0, right:0, zIndex:5, padding:"16px 24px 40px", background:"linear-gradient(to top,rgba(0,0,0,.75),transparent)" }}>
+                <div style={{ textAlign:"center", marginBottom:14, fontSize:12, color:"rgba(255,255,255,.75)", fontWeight:500 }}>Fit card inside the frame — best quality, 1x zoom</div>
+                <div style={{ display:"flex", justifyContent:"center" }}>
+                  <button onClick={capture} style={{ width:72, height:72, borderRadius:"50%", background:"#fff", border:"4px solid rgba(255,255,255,.35)", cursor:"pointer", padding:0, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 24px rgba(0,0,0,.4)" }}>
+                    <div style={{ width:56, height:56, borderRadius:"50%", background:`linear-gradient(135deg,${C.peach},${C.peachDk})`, boxShadow:`0 0 18px ${hex2rgb(C.peachDk,.6)}` }}/>
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </>
+      )}
+
+      {/* Upload mode */}
+      {mode === "upload" && (
+        <div style={{ position:"absolute", inset:0, background:C.dark, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 28px", gap:18 }}>
+          <div style={{ width:80, height:80, borderRadius:22, background:hex2rgb(C.peach,.15), border:`2px dashed ${hex2rgb(C.peach,.5)}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:36 }}>🖼</div>
+          <div style={{ textAlign:"center" }}>
+            <div className="syne" style={{ fontSize:22, fontWeight:700, color:"#fff", marginBottom:6 }}>Upload a card photo</div>
+            <div style={{ fontSize:13, color:"rgba(255,255,255,.55)", lineHeight:1.6, maxWidth:260 }}>Choose any photo from your gallery. Use a well-lit, flat photo for best grading accuracy.</div>
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" onChange={handleUpload} style={{ display:"none" }}/>
+          <button onClick={()=>fileRef.current?.click()} style={{ background:`linear-gradient(135deg,${C.peach},${C.peachDk})`, border:"none", borderRadius:14, padding:"14px 32px", fontSize:15, fontWeight:700, color:"#fff", cursor:"pointer", boxShadow:`0 6px 20px ${hex2rgb(C.peachDk,.4)}` }}>
+            Choose Photo
+          </button>
+          <div style={{ fontSize:11, color:"rgba(255,255,255,.3)" }}>Supports JPG, PNG, HEIC</div>
+        </div>
       )}
     </div>
   );
@@ -1395,71 +873,58 @@ function CameraScreen({ user, onCapture, onBack, ctx }) {
 /* ═══════════════════════════════════════════════════════════════════════════
    SCREEN: PROCESSING
 ═══════════════════════════════════════════════════════════════════════════ */
-const PROC_STEPS = [
-  "BoBoa frame detection…",
-  "Cropping card boundaries…",
-  "Extracting 4 corners…",
-  "Stitching corner grid…",
-  "Sealing BoBoa watermark…",
-  "BoBoa AI identifying card…",
-  "Cross-checking card number…",
-  "Detecting language…",
-  "BoBoaGrade analysis…",
+const STEPS = [
+  "Analysing card image…","Reading card code…","Cross-checking database…",
+  "Detecting language…","Listing candidates…","BoBoaGrade in progress…",
+  "Grading corners…","Grading surface…","Building report…",
 ];
 
 function ProcessingScreen({ photos, ctx, onDone }) {
   const [step, setStep] = useState(0);
-  const [pct, setPct]   = useState(0);
-  const ranRef = useRef(false);
+  const [pct,  setPct]  = useState(0);
+  const ran = useRef(false);
 
   useEffect(() => {
-    if (ranRef.current) return;
-    ranRef.current = true;
-    let i = 0;
-    const iv = setInterval(() => {
-      i++;
-      setStep(i);
-      setPct(Math.round((i / PROC_STEPS.length) * 100));
-      if (i >= PROC_STEPS.length - 1) {
+    if(ran.current) return; ran.current=true;
+    let i=0;
+    const iv = setInterval(()=>{
+      i++; setStep(i); setPct(Math.round((i/STEPS.length)*100));
+      if(i>=STEPS.length-1){
         clearInterval(iv);
-        boboaRecognize({
-          imageDataUrl: photos.full,
-          tcgType: ctx.tcgType,
-          language: ctx.language,
-        }).then(r => setTimeout(() => onDone(r), 500));
+        // Run both in parallel
+        Promise.all([
+          boboaIdentify({ imageDataUrl:photos.full, tcgType:ctx.tcg, language:ctx.lang }),
+          boboaGrade({ imageDataUrl:photos.full }),
+        ]).then(([id,gr])=>setTimeout(()=>onDone({identify:id,grade:gr}),500));
       }
-    }, 350);
-    return () => clearInterval(iv);
+    }, 340);
+    return ()=>clearInterval(iv);
   }, [photos, ctx, onDone]);
 
   return (
-    <div style={{ minHeight: "100vh", background: P.bg, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 22, padding: "40px 30px", position: "relative", overflow: "hidden" }}>
+    <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:22, padding:"40px 30px", position:"relative", overflow:"hidden" }}>
       <style>{CSS}</style>
+      <div style={{ position:"absolute", top:"20%", left:"-20%", width:"60%", height:"40%", background:hex2rgb(C.peach,.18), borderRadius:"50%", filter:"blur(80px)" }}/>
+      <div style={{ position:"absolute", bottom:"15%", right:"-20%", width:"60%", height:"40%", background:hex2rgb(C.lav,.18), borderRadius:"50%", filter:"blur(80px)" }}/>
 
-      <div style={{ position: "absolute", top: "20%", left: "-20%", width: "60%", height: "40%", background: toRgba(P.peach, 0.2), borderRadius: "50%", filter: "blur(80px)" }}/>
-      <div style={{ position: "absolute", bottom: "20%", right: "-20%", width: "60%", height: "40%", background: toRgba(P.lavender, 0.2), borderRadius: "50%", filter: "blur(80px)" }}/>
-
-      <div className="fu1" style={{ position: "relative", width: 96, height: 96, zIndex: 1 }}>
-        <div style={{ position: "absolute", inset: 0, border: `3px solid ${toRgba(P.peach, 0.25)}`, borderRadius: "50%" }}/>
-        <div style={{ position: "absolute", inset: 0, border: "3px solid transparent", borderTopColor: P.peachDp, borderRadius: "50%", animation: "spin 0.9s linear infinite" }}/>
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <span className="display" style={{ fontSize: 22, fontWeight: 700, color: P.peachDp }}>{pct}%</span>
+      <div className="r1" style={{ position:"relative", width:100, height:100, zIndex:1 }}>
+        <div style={{ position:"absolute", inset:0, border:`3px solid ${hex2rgb(C.peach,.22)}`, borderRadius:"50%" }}/>
+        <div style={{ position:"absolute", inset:0, border:"3px solid transparent", borderTopColor:C.peachDk, borderRadius:"50%", animation:"spin .9s linear infinite" }}/>
+        <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <span className="syne" style={{ fontSize:22, fontWeight:700, color:C.peachDk }}>{pct}%</span>
         </div>
       </div>
-
-      <div className="fu2" style={{ textAlign: "center", position: "relative", zIndex: 1 }}>
-        <div className="display" style={{ fontSize: 24, fontWeight: 700, marginBottom: 5 }}>BoBoa AI is working…</div>
-        <div style={{ fontSize: 13, color: P.sub, minHeight: 20 }}>{PROC_STEPS[step-1] || PROC_STEPS[0]}</div>
+      <div className="r2" style={{ textAlign:"center", zIndex:1 }}>
+        <div className="syne" style={{ fontSize:24, fontWeight:700, marginBottom:5 }}>BoBoa AI working…</div>
+        <div style={{ fontSize:13, color:C.sub }}>{STEPS[step-1]||STEPS[0]}</div>
       </div>
-
-      <div className="fu2" style={{ width: "100%", maxWidth: 290, height: 5, background: P.bgDeep, borderRadius: 99, position: "relative", zIndex: 1 }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: `linear-gradient(90deg, ${P.peach}, ${P.peachDp})`, borderRadius: 99, transition: "width 0.35s" }}/>
+      <div style={{ width:"100%", maxWidth:290, height:5, background:C.deep, borderRadius:99, zIndex:1 }}>
+        <div style={{ height:"100%", width:`${pct}%`, background:`linear-gradient(90deg,${C.peach},${C.peachDk})`, borderRadius:99, transition:"width .35s" }}/>
       </div>
-
-      {photos.corners && (
-        <div className="fu3" style={{ width: "100%", maxWidth: 220, textAlign: "center", position: "relative", zIndex: 1 }}>
-          <div style={{ fontSize: 10, color: P.dim, marginBottom: 8, letterSpacing: "0.1em" }} className="mono">CORNERS · EXTRACTED</div>
-          <img src={photos.corners} alt="corners" style={{ width: "100%", borderRadius: 12, border: `1px solid ${P.border}`, boxShadow: "0 4px 18px rgba(31,30,42,0.08)" }}/>
+      {photos.corners&&(
+        <div className="r3" style={{ width:"100%", maxWidth:220, textAlign:"center", zIndex:1 }}>
+          <div style={{ fontSize:10, color:C.dim, marginBottom:8, letterSpacing:".1em" }} className="mono">CORNERS · EXTRACTED</div>
+          <img src={photos.corners} alt="corners" style={{ width:"100%", borderRadius:12, border:`1px solid ${C.bord}` }}/>
         </div>
       )}
     </div>
@@ -1467,675 +932,604 @@ function ProcessingScreen({ photos, ctx, onDone }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SCREEN: RARITY PICKER (adapts to TCG type)
+   SCREEN: CARD PICKER — AI returns candidates, user selects
 ═══════════════════════════════════════════════════════════════════════════ */
-function RarityPickerScreen({ photos, aiResult, user, ctx, onConfirm, onRescan }) {
-  const ai = aiResult?.success ? aiResult.data : null;
-  const rarities = RARITIES_BY_TCG[ctx.tcgType] || RARITIES_BY_TCG.onepiece;
+function CardPickerScreen({ photos, aiData, ctx, onSelect, onRescan }) {
+  const idResult = aiData?.identify;
+  const candidates = idResult?.success ? (idResult.data?.candidates || []) : [];
 
-  // Pre-fill from AI if it matches
-  const initialRarity = ai?.rarity && rarities.find(r => r.id === ai.rarity)
-    ? ai.rarity
-    : rarities.find(r => r.id === "SR")?.id || rarities[0].id;
+  const [selected, setSelected]   = useState(null);
+  const [manualId, setManualId]   = useState("");
+  const [showManual, setShowManual] = useState(candidates.length === 0);
 
-  const [rarity, setRarity] = useState(initialRarity);
-  const [cardIdOverride, setCardIdOverride] = useState(ai?.cardId || "");
-  const [editing, setEditing] = useState(false);
+  const tcg = TCG_TYPES.find(t=>t.id===ctx.tcg);
+  const lang = LANGUAGES.find(l=>l.id===ctx.lang);
 
-  const cardId = editing ? cardIdOverride : (ai?.cardId || "");
-  const dbCard = cardId ? CARD_DB[cardId] : null;
-
-  const name      = dbCard?.name    || ai?.name  || "Unknown card";
-  const nameJP    = dbCard?.nameJP  || ai?.nameJP || "";
-  const setName   = dbCard?.setName || ai?.setName || "";
-  const conf      = ai?.confidence ?? 0;
-  const idConf    = ai?.cardIdConfidence ?? conf;
-
-  const confColor = conf >= 85 ? P.sageDp : conf >= 65 ? P.butterDp : P.coral;
-
-  const confirm = () => {
-    const db = CARD_DB[cardId];
-    onConfirm({
+  const handleConfirm = () => {
+    const cardId = showManual ? manualId.trim().toUpperCase() : selected;
+    if(!cardId) return;
+    const dbCard = CARD_DB[cardId];
+    const aiCard = candidates.find(c=>c.cardId===cardId);
+    onSelect({
       cardId,
-      tcgType: ctx.tcgType,
-      language: ctx.language,
-      name:     db?.name     || name,
-      nameJP:   db?.nameJP   || nameJP,
-      set:      db?.set      || ai?.set || "",
-      setName:  db?.setName  || setName,
-      rarity,
-      type:     db?.type     || ai?.type || "",
-      color:    db?.color    || ai?.color || "",
-      cost:     db?.cost ?? ai?.cost ?? null,
-      power:    db?.power    || ai?.power || null,
-      attribute:db?.attribute,
-      level:    db?.level,
-      atk:      db?.atk, def: db?.def,
-      hp:       db?.hp,
-      traits:   db?.traits   || [],
-      ability:  db?.ability  || "",
-      confidence: conf,
-      cardIdConfidence: idConf,
-      languageEvidence: ai?.languageEvidence || "",
-      matchesSelectedType: ai?.matchesSelectedType,
-      matchesSelectedLanguage: ai?.matchesSelectedLanguage,
-      pq: ai?.printQuality || { centering: 85, corners: 88, edges: 88, surface: 90, overall: 88, notes: "" },
-      dbCard: !!db,
+      name:      dbCard?.name    || aiCard?.name    || "Unknown",
+      nameJP:    dbCard?.nameJP  || aiCard?.nameOriginal || "",
+      set:       dbCard?.set     || aiCard?.set      || "",
+      setName:   dbCard?.setName || aiCard?.setName  || "",
+      rarity:    dbCard ? Object.keys(dbCard.rarities||{})[0] : (aiCard?.rarity||""),
+      language:  idResult?.data?.language || ctx.lang,
+      confidence:aiCard?.confidence || (dbCard?80:30),
+      evidence:  aiCard?.evidence  || "",
+      inDB:      !!dbCard,
     });
   };
 
-  const tcg = TCG_TYPES.find(t => t.id === ctx.tcgType);
+  const confColor = c => c>=85?C.sageDk:c>=65?C.butterDk:C.coral;
 
   return (
-    <div style={{ maxWidth: 430, margin: "0 auto", background: P.bg, minHeight: "100vh" }}>
+    <div style={{ maxWidth:430, margin:"0 auto", background:C.bg, minHeight:"100vh" }}>
       <style>{CSS}</style>
-
-      <div style={{ background: P.surface, borderBottom: `1px solid ${P.border}`, padding: "46px 18px 12px", position: "sticky", top: 0, zIndex: 40 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <SmallBtn onClick={onRescan}>← Rescan</SmallBtn>
-          <div className="display" style={{ fontSize: 15, fontWeight: 700 }}>BoBoa Scan · Confirm</div>
-          <div style={{ width: 70 }}/>
+      <div style={{ background:C.surf, borderBottom:`1px solid ${C.bord}`, padding:"46px 18px 12px", position:"sticky", top:0, zIndex:40 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <SBtn onClick={onRescan}>← Rescan</SBtn>
+          <div className="syne" style={{ fontSize:15, fontWeight:700 }}>Select Card</div>
+          <div style={{ width:72 }}/>
         </div>
       </div>
 
-      <div style={{ padding: "14px 16px 110px", display: "flex", flexDirection: "column", gap: 12 }}>
-
-        {/* Confidence banner */}
-        <div className="fu1">
-          <Card accentColor={confColor} style={{ borderColor: toRgba(confColor, 0.4) }}>
-            <div style={{ padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontSize: 10.5, color: P.sub, marginBottom: 3, letterSpacing: "0.06em" }}>◆ BOBOA AI</div>
-                <div className="display" style={{ fontSize: 32, fontWeight: 700, color: confColor, lineHeight: 1 }}>{conf}%</div>
-                {ai?.languageEvidence && (
-                  <div style={{ fontSize: 11, color: P.sub, marginTop: 6, maxWidth: 220, lineHeight: 1.5 }}>🗣 {ai.languageEvidence}</div>
-                )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-end" }}>
-                <Pill color={aiResult?.success ? P.sageDp : P.coral}>{aiResult?.success ? "✓ AI matched" : "⚠ AI failed"}</Pill>
-                <Pill color={tcg?.color || P.skyDp}>{tcg?.emoji} {tcg?.name}</Pill>
-                <Pill color={P.skyDp}>{LANGUAGES.find(l=>l.id===ctx.language)?.flag} {ctx.language}</Pill>
-              </div>
-            </div>
-            {(ai?.matchesSelectedType === false || ai?.matchesSelectedLanguage === false) && (
-              <div style={{ padding: "9px 16px", background: toRgba(P.butterDp, 0.1), borderTop: `1px solid ${toRgba(P.butterDp, 0.3)}`, fontSize: 12, color: P.ink }}>
-                ⚠ AI thinks this might not match your selected {ai.matchesSelectedType === false ? "TCG type" : "language"}. Double-check.
-              </div>
-            )}
-          </Card>
-        </div>
+      <div style={{ padding:"14px 16px 110px", display:"flex", flexDirection:"column", gap:12 }}>
 
         {/* Photos */}
-        <div className="fu2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <Card>
-            <img src={photos.full} alt="card" style={{ width: "100%", aspectRatio: "63/88", objectFit: "cover", display: "block" }}/>
-            <div style={{ padding: "7px 12px", fontSize: 10, color: P.sub, letterSpacing: "0.08em" }} className="mono">CARD · FRAMED</div>
-          </Card>
-          <Card>
-            <img src={photos.corners} alt="corners" style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", display: "block" }}/>
-            <div style={{ padding: "7px 12px", fontSize: 10, color: P.sub, letterSpacing: "0.08em" }} className="mono">4 CORNERS · STITCHED</div>
-          </Card>
+        <div className="r1" style={{ display:"grid", gridTemplateColumns:"2fr 1fr", gap:10 }}>
+          <Card><img src={photos.full} alt="card" style={{ width:"100%", aspectRatio:"63/88", objectFit:"cover", display:"block" }}/><div style={{ padding:"6px 12px", fontSize:10, color:C.sub }} className="mono">CAPTURED</div></Card>
+          <Card><img src={photos.corners} alt="corners" style={{ width:"100%", aspectRatio:"1/1", objectFit:"cover", display:"block" }}/><div style={{ padding:"6px 12px", fontSize:10, color:C.sub }} className="mono">CORNERS</div></Card>
         </div>
 
-        {/* Card ID editable */}
-        <div className="fu3">
-          <Card>
-            <SectionHeader accent={P.peachDp}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>◆ Card Identification</span>
-                <button onClick={() => setEditing(!editing)} style={{
-                  background: "none", border: "none", color: editing ? P.peachDp : P.sub,
-                  fontSize: 11, fontWeight: 700, cursor: "pointer", letterSpacing: 0.5,
-                }}>{editing ? "DONE" : "EDIT"}</button>
+        {/* Language / type detection */}
+        {idResult?.data && (
+          <div className="r2">
+            <Card>
+              <div style={{ padding:"12px 16px", display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+                <Pill ch={`${lang?.flag} ${idResult.data.language||ctx.lang}`} color={C.skyDk}/>
+                <Pill ch={`${tcg?.emoji} ${tcg?.name}`} color={tcg?.color||C.coral}/>
+                {idResult.data.languageEvidence && <div style={{ fontSize:11, color:C.sub, width:"100%", marginTop:4 }}>🗣 {idResult.data.languageEvidence}</div>}
+                {idResult.data.cardIdRegion && <div style={{ fontSize:11, color:C.sub }}>📍 Code location: {idResult.data.cardIdRegion}</div>}
               </div>
-            </SectionHeader>
-            <div style={{ padding: "14px 16px" }}>
-              {editing ? (
-                <div>
-                  <div style={{ fontSize: 11, color: P.sub, marginBottom: 6 }}>Card Number / ID</div>
-                  <input value={cardIdOverride} onChange={e => setCardIdOverride(e.target.value)}
-                    placeholder="e.g. OP07-051, LOB-001, SV3-185"
-                    style={{ width: "100%", background: P.bg, border: `1.5px solid ${P.border}`, borderRadius: 10, padding: "11px 12px", fontSize: 14, fontFamily: "JetBrains Mono, monospace", outline: "none" }}/>
-                  <div style={{ fontSize: 11, color: P.dim, marginTop: 6 }}>
-                    {CARD_DB[cardIdOverride] ? `✓ Found in database` : `Not in seed DB — will use generated data`}
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
-                    <span className="mono" style={{ fontSize: 13, color: P.peachDp, fontWeight: 600, letterSpacing: "0.06em" }}>{cardId || "—"}</span>
-                    {idConf > 0 && <Pill color={idConf >= 80 ? P.sageDp : P.butterDp} style={{ fontSize: 9 }}>{idConf}% match</Pill>}
-                  </div>
-                  <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.1, marginBottom: 3 }}>{name}</div>
-                  {nameJP && <div className="mono" style={{ fontSize: 11, color: P.dim, marginBottom: 6 }}>{nameJP}</div>}
-                  {setName && <div style={{ fontSize: 12.5, color: P.sub }}>{setName}</div>}
-                </>
-              )}
-            </div>
-          </Card>
-        </div>
+            </Card>
+          </div>
+        )}
 
-        {/* Rarity picker */}
-        <div className="fu4">
-          <Card>
-            <SectionHeader accent={P.lavDp}>Select Rarity · {tcg?.name}</SectionHeader>
-            <div style={{ padding: "12px 14px 14px" }}>
-              <div style={{ fontSize: 12, color: P.sub, marginBottom: 10, lineHeight: 1.5 }}>
-                Pricing updates based on rarity. AI suggested <strong style={{ color: P.ink }}>{ai?.rarity || "—"}</strong>.
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 7 }}>
-                {rarities.map(r => {
-                  const sel = rarity === r.id;
+        {/* Candidate list */}
+        {candidates.length > 0 && (
+          <div className="r3">
+            <Card>
+              <Hdr accent={C.peachDk}>◆ BoBoa AI · Candidates — tap to select</Hdr>
+              <div style={{ padding:"8px 0" }}>
+                {candidates.map((c,i) => {
+                  const sel = selected === c.cardId;
+                  const db  = CARD_DB[c.cardId];
                   return (
-                    <button key={r.id} onClick={() => setRarity(r.id)} style={{
-                      background: sel ? r.color : P.surface,
-                      color: sel ? "#fff" : P.ink,
-                      border: `1.5px solid ${sel ? r.color : P.border}`,
-                      borderRadius: 10, padding: "9px 6px",
-                      cursor: "pointer", textAlign: "center",
-                      boxShadow: sel ? `0 4px 12px ${toRgba(r.color, 0.3)}` : "none",
-                      transition: "all 0.15s",
+                    <button key={i} onClick={()=>{ setSelected(c.cardId); setShowManual(false); }} style={{
+                      display:"block", width:"100%", textAlign:"left",
+                      background: sel ? hex2rgb(C.peachDk,.08) : "transparent",
+                      border:"none",
+                      borderLeft: sel ? `3px solid ${C.peachDk}` : "3px solid transparent",
+                      borderBottom: i<candidates.length-1 ? `1px solid ${C.line}` : "none",
+                      padding:"12px 16px",
+                      cursor:"pointer",
                     }}>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>{r.label}</div>
-                      <div style={{ fontSize: 10, marginTop: 2, opacity: 0.78 }}>{r.desc}</div>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
+                        <div style={{ flex:1 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:3 }}>
+                            <span className="mono" style={{ fontSize:12.5, fontWeight:700, color:C.peachDk }}>{c.cardId}</span>
+                            {db && <Pill ch="✓ In DB" color={C.sageDk} s={{ fontSize:9 }}/>}
+                          </div>
+                          <div className="syne" style={{ fontSize:16, fontWeight:700, lineHeight:1.1, marginBottom:2 }}>{c.name}</div>
+                          {c.nameOriginal && c.nameOriginal!==c.name && <div className="mono" style={{ fontSize:11, color:C.dim }}>{c.nameOriginal}</div>}
+                          {c.setName && <div style={{ fontSize:12, color:C.sub, marginTop:3 }}>{c.setName}</div>}
+                          {c.evidence && <div style={{ fontSize:11, color:C.dim, marginTop:4, lineHeight:1.5 }}>💡 {c.evidence}</div>}
+                        </div>
+                        <div style={{ textAlign:"right", flexShrink:0 }}>
+                          <div className="syne" style={{ fontSize:22, fontWeight:800, color:confColor(c.confidence), lineHeight:1 }}>{c.confidence}%</div>
+                          <div style={{ fontSize:10, color:C.sub }}>match</div>
+                        </div>
+                      </div>
                     </button>
                   );
                 })}
               </div>
-            </div>
-          </Card>
-        </div>
-
-        {ai?.printQuality?.notes && (
-          <div className="fu5">
-            <Card>
-              <SectionHeader>BoBoa AI Notes</SectionHeader>
-              <div style={{ padding: "12px 16px", fontSize: 12.5, color: P.sub, lineHeight: 1.65 }}>{ai.printQuality.notes}</div>
             </Card>
           </div>
         )}
+
+        {/* None match — manual entry */}
+        <div className="r4">
+          <Card>
+            <button onClick={()=>setShowManual(m=>!m)} style={{
+              display:"flex", justifyContent:"space-between", alignItems:"center",
+              width:"100%", background:"transparent", border:"none",
+              padding:"13px 16px", cursor:"pointer",
+            }}>
+              <div style={{ fontSize:13.5, fontWeight:600, color:C.ink }}>
+                {candidates.length>0 ? "None match — enter manually" : "Enter card number manually"}
+              </div>
+              <span style={{ fontSize:18, color:C.sub }}>{showManual?"▲":"▼"}</span>
+            </button>
+            {showManual && (
+              <div style={{ padding:"0 16px 16px", borderTop:`1px solid ${C.line}` }}>
+                <div style={{ fontSize:12, color:C.sub, margin:"12px 0 8px", lineHeight:1.5 }}>
+                  {tcg?.codeHint}
+                </div>
+                <input type="text" value={manualId} onChange={e=>{setManualId(e.target.value.toUpperCase());setSelected(null);}} placeholder={tcg?.id==="onepiece"?"e.g. OP07-051":tcg?.id==="yugioh"?"e.g. LOCR-JP001":"e.g. SV3-185"}
+                  style={{ width:"100%", background:C.bg, border:`1.5px solid ${C.bord}`, borderRadius:11, padding:"11px 12px", fontSize:14, color:C.ink, outline:"none", fontFamily:"JetBrains Mono,monospace" }}
+                  onFocus={e=>e.target.style.borderColor=C.peachDk} onBlur={e=>e.target.style.borderColor=C.bord}/>
+                {manualId && (
+                  <div style={{ marginTop:8, fontSize:12, color: CARD_DB[manualId] ? C.sageDk : C.sub }}>
+                    {CARD_DB[manualId] ? `✓ Found: ${CARD_DB[manualId].name}` : "Not in local DB — will use AI data"}
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+        </div>
       </div>
 
-      <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, background: "rgba(250,247,242,0.96)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", borderTop: `1px solid ${P.border}`, padding: "11px 16px 28px", display: "flex", gap: 10 }}>
-        <SmallBtn onClick={onRescan} style={{ flex: 1, padding: "12px", fontSize: 13 }}>📷 Rescan</SmallBtn>
-        <PrimaryBtn onClick={confirm} disabled={!cardId} style={{ flex: 2, padding: "12px", fontSize: 14 }}>
-          Confirm · View Prices →
-        </PrimaryBtn>
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, background:"rgba(250,247,242,.96)", backdropFilter:"blur(16px)", borderTop:`1px solid ${C.bord}`, padding:"11px 16px 28px", display:"flex", gap:10 }}>
+        <SBtn onClick={onRescan} s={{ flex:1, padding:"12px" }}>📷 Rescan</SBtn>
+        <PBtn onClick={handleConfirm} disabled={!selected&&!manualId.trim()} s={{ flex:2, padding:"12px", fontSize:14 }}>
+          Confirm Card →
+        </PBtn>
       </div>
     </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   BGS HELPERS
+   SCREEN: RARITY PICKER
 ═══════════════════════════════════════════════════════════════════════════ */
-const BGS_CRITERIA = [
-  { key: "centering", label: "Centering", desc: "Border ratio front/back · PSA 10: ≤55/45 front, ≤60/40 back" },
-  { key: "corners",   label: "Corners",   desc: "Sharpness and whitening of all 4 corners" },
-  { key: "edges",     label: "Edges",     desc: "Smoothness, chipping, layering on all 4 edges" },
-  { key: "surface",   label: "Surface",   desc: "Print defects, scratches, dents, holo scratches" },
-];
+function RarityScreen({ photos, card, aiData, ctx, onConfirm, onBack }) {
+  const rarities = RARITIES[ctx.tcg] || RARITIES.onepiece;
+  const aiRarity = aiData?.identify?.data?.candidates?.[0]?.rarity;
+  const [rarity, setRarity] = useState(aiRarity && rarities.find(r=>r.id===aiRarity) ? aiRarity : rarities[0]?.id);
 
-function bgsRelative(s) { return Math.max(0, Math.min(10, Math.round((s / 10) * 2) / 2)); }
+  return (
+    <div style={{ maxWidth:430, margin:"0 auto", background:C.bg, minHeight:"100vh" }}>
+      <style>{CSS}</style>
+      <div style={{ background:C.surf, borderBottom:`1px solid ${C.bord}`, padding:"46px 18px 12px", position:"sticky", top:0, zIndex:40 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <SBtn onClick={onBack}>← Back</SBtn>
+          <div className="syne" style={{ fontSize:15, fontWeight:700 }}>Select Rarity</div>
+          <div style={{ width:72 }}/>
+        </div>
+      </div>
 
-function bgsOverallBand(scores) {
-  const subs = BGS_CRITERIA.map(c => bgsRelative(scores?.[c.key] || 0));
-  const min  = Math.min(...subs);
-  const avg  = subs.reduce((a,b) => a+b, 0) / subs.length;
-  const ov   = Math.min(avg, min + 0.5);
-  const r    = Math.floor(ov * 2) / 2;
-  if (r >= 9.5 && min >= 9.5) {
-    if (min >= 10) return { grade: "BGS 10 PRISTINE", color: P.lavDp, value: 10 };
-    return { grade: "BGS 10 GEM MINT", color: P.butterDp, value: r };
-  }
-  if (r >= 9)   return { grade: `BGS ${r} MINT`,       color: P.sageDp,  value: r };
-  if (r >= 8)   return { grade: `BGS ${r} NM-MT`,      color: P.skyDp,   value: r };
-  if (r >= 7)   return { grade: `BGS ${r} NEAR MINT`,  color: P.peachDp, value: r };
-  return { grade: `BGS ${r} EX`, color: P.coral, value: r };
+      <div style={{ padding:"14px 16px 110px", display:"flex", flexDirection:"column", gap:12 }}>
+        <div className="r1">
+          <Card>
+            <div style={{ padding:"14px 16px", display:"flex", gap:12, alignItems:"center" }}>
+              <img src={photos.full} alt="card" style={{ width:70, aspectRatio:"63/88", objectFit:"cover", borderRadius:9, boxShadow:"0 4px 14px rgba(28,27,38,.18)" }}/>
+              <div>
+                <div className="mono" style={{ fontSize:10, color:C.peachDk, marginBottom:4, fontWeight:600 }}>{card.cardId}</div>
+                <div className="syne" style={{ fontSize:20, fontWeight:700, lineHeight:1.1, marginBottom:4 }}>{card.name}</div>
+                <div style={{ fontSize:12, color:C.sub }}>{card.setName}</div>
+                {aiRarity && <div style={{ fontSize:11, color:C.dim, marginTop:4 }}>AI suggested: <strong style={{color:C.ink}}>{aiRarity}</strong></div>}
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        <div className="r2">
+          <Card>
+            <Hdr accent={C.lavDk}>Select rarity · {TCG_TYPES.find(t=>t.id===ctx.tcg)?.name}</Hdr>
+            <div style={{ padding:"12px 14px 14px" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:7 }}>
+                {rarities.map(r=>{
+                  const sel=rarity===r.id, hasPrice=CARD_DB[card.cardId]?.rarities?.[r.id];
+                  return <button key={r.id} onClick={()=>setRarity(r.id)} style={{ background:sel?r.color:C.surf, color:sel?"#fff":C.ink, border:`1.5px solid ${sel?r.color:C.bord}`, borderRadius:11, padding:"10px 6px", cursor:"pointer", textAlign:"center", boxShadow:sel?`0 4px 12px ${hex2rgb(r.color,.3)}`:"none", transition:"all .15s", position:"relative" }}>
+                    <div style={{ fontSize:13, fontWeight:700 }}>{r.label}</div>
+                    {hasPrice && <div style={{ position:"absolute", top:4, right:4, width:6, height:6, borderRadius:"50%", background:C.sageDk }}/>}
+                  </button>;
+                })}
+              </div>
+              <div style={{ fontSize:11, color:C.dim, marginTop:10 }}>
+                Green dot = price data available. AI suggested: <strong style={{color:C.ink}}>{aiRarity||"—"}</strong>
+              </div>
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, background:"rgba(250,247,242,.96)", backdropFilter:"blur(16px)", borderTop:`1px solid ${C.bord}`, padding:"11px 16px 28px", display:"flex", gap:10 }}>
+        <SBtn onClick={onBack} s={{ flex:1, padding:"12px" }}>← Back</SBtn>
+        <PBtn onClick={()=>onConfirm({...card, rarity})} s={{ flex:2, padding:"12px", fontSize:14 }}>
+          View Prices & Grade →
+        </PBtn>
+      </div>
+    </div>
+  );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SCREEN: RESULT
+   SCREEN: RESULT — Prices + BoBoaGrade
 ═══════════════════════════════════════════════════════════════════════════ */
-function ResultScreen({ photos, card, user, onRescan }) {
-  const [tab, setTab] = useState("prices");
-  const [priceData, setPriceData] = useState(null);
-  const [priceLoading, setPriceLoading] = useState(true);
-  const [gradeFilter, setGradeFilter]   = useState("raw_mint");
-  const [timeframe, setTimeframe]        = useState("1Y");
-  const [sourceFilter, setSourceFilter]  = useState(null);
+function ResultScreen({ photos, card, aiData, user, onRescan }) {
+  const [tab, setTab]       = useState("prices");
+  const [tf,  setTf]        = useState("1Y");
+  const [srcFilter, setSrcFilter] = useState(null);
 
-  // Fetch multi-source pricing
-  useEffect(() => {
-    setPriceLoading(true);
-    fetchMultiSourcePrices({
-      cardId: card.cardId,
-      rarity: card.rarity,
-      tcgType: card.tcgType,
-      language: card.language,
-    }).then(result => {
-      setPriceData(result);
-      setPriceLoading(false);
-    });
-  }, [card.cardId, card.rarity, card.tcgType, card.language]);
+  const gradeResult = aiData?.grade;
+  const grade = gradeResult?.success ? gradeResult.data : null;
 
-  const tcg = TCG_TYPES.find(t => t.id === card.tcgType);
-  const rarities = RARITIES_BY_TCG[card.tcgType] || [];
-  const rarityOpt = rarities.find(r => r.id === card.rarity) || rarities[0];
-  const bgsOverall = bgsOverallBand(card.pq);
+  const priceData = getPriceData({ cardId:card.cardId, rarity:card.rarity, language:card.language });
+  const yuyutei = priceData?.yuyutei;
 
-  // Search links for external markets
-  const query = encodeURIComponent(`${card.name} ${card.cardId}`);
-  const jpQuery = encodeURIComponent(`${card.nameJP || card.name} ${card.cardId}`);
-  const externalLinks = card.language === "JP"
-    ? [
-        { ...SOURCES.find(s=>s.id==="yuyutei"),    q: jpQuery },
-        { ...SOURCES.find(s=>s.id==="mercari"),    q: jpQuery },
-        { ...SOURCES.find(s=>s.id==="rakuten"),    q: jpQuery },
-        { ...SOURCES.find(s=>s.id==="amazon_jp"),  q: jpQuery },
-        { ...SOURCES.find(s=>s.id==="ebay"),       q: query },
-      ]
-    : [
-        { ...SOURCES.find(s=>s.id==="ebay"),         q: query },
-        { ...SOURCES.find(s=>s.id==="tcgplayer"),    q: query },
-        { ...SOURCES.find(s=>s.id==="pricecharting"),q: query },
-        { ...SOURCES.find(s=>s.id==="tcgcorner"),    q: query },
-      ];
+  const tcg = TCG_TYPES.find(t=>t.id===card.tcgType||CARD_DB[card.cardId]?.tcg);
+  const rarities = RARITIES[tcg?.id||"onepiece"]||[];
+  const rarOpt = rarities.find(r=>r.id===card.rarity)||rarities[0];
+
+  const bgsColor = s => s>=9.5?C.lavDk:s>=9?C.sageDk:s>=8?C.butterDk:s>=7?C.peachDk:C.coral;
+
+  const searchQ = card.language==="JP" ? `${card.nameJP||card.name} ${card.cardId}` : `${card.name} ${card.cardId}`;
+  const mercariUrl = `https://jp.mercari.com/search?keyword=${encodeURIComponent(searchQ)}&item_condition_id=1,2,3`;
+
+  // Scrollable sales list (3yr, newest first, source filter)
+  const threeYrsAgo = new Date(); threeYrsAgo.setFullYear(threeYrsAgo.getFullYear()-3);
+  const sales = (priceData?.allSales||[])
+    .filter(s=>new Date(s.date)>=threeYrsAgo)
+    .filter(s=>!srcFilter||s.sourceId===srcFilter)
+    .slice(0,100);
 
   return (
-    <div style={{ maxWidth: 430, margin: "0 auto", background: P.bg, minHeight: "100vh" }}>
+    <div style={{ maxWidth:430, margin:"0 auto", background:C.bg, minHeight:"100vh" }}>
       <style>{CSS}</style>
 
-      {/* Sticky header */}
-      <div style={{ background: P.surface, borderBottom: `1px solid ${P.border}`, padding: "44px 16px 0", position: "sticky", top: 0, zIndex: 40 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <SmallBtn onClick={onRescan}>📷 Scan</SmallBtn>
-          <div style={{ display: "flex", gap: 4 }}>
-            <Pill color={P.sageDp}>✓ BoBoa AI</Pill>
-            <Pill color={rarityOpt?.color || P.skyDp}>{card.rarity}</Pill>
-            <Pill color={tcg?.color || P.skyDp}>{tcg?.emoji}</Pill>
+      {/* Header */}
+      <div style={{ background:C.surf, borderBottom:`1px solid ${C.bord}`, padding:"44px 16px 0", position:"sticky", top:0, zIndex:40 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+          <SBtn onClick={onRescan}>📷 Scan</SBtn>
+          <div style={{ display:"flex", gap:4 }}>
+            <Pill ch="✓ BoBoa AI" color={C.sageDk}/>
+            <Pill ch={rarOpt?.label||card.rarity} color={rarOpt?.color||C.skyDk}/>
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 13, alignItems: "flex-start", marginBottom: 10 }}>
-          <div style={{ position: "relative", flexShrink: 0 }}>
-            <img src={photos.full} alt="card" style={{ width: 90, aspectRatio: "63/88", objectFit: "cover", borderRadius: 11, boxShadow: "0 6px 20px rgba(31,30,42,0.18)" }}/>
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="mono" style={{ fontSize: 10, color: P.peachDp, letterSpacing: "0.1em", marginBottom: 4, fontWeight: 600 }}>
-              {card.set} · {card.cardId}
+        <div style={{ display:"flex", gap:13, alignItems:"flex-start", marginBottom:10 }}>
+          <img src={photos.full} alt="card" style={{ width:88, aspectRatio:"63/88", objectFit:"cover", borderRadius:11, boxShadow:"0 6px 20px rgba(28,27,38,.2)", flexShrink:0 }}/>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div className="mono" style={{ fontSize:10, color:C.peachDk, letterSpacing:".1em", marginBottom:4, fontWeight:600 }}>{card.set} · {card.cardId}</div>
+            <div className="syne" style={{ fontSize:22, fontWeight:800, lineHeight:1.1, marginBottom:5 }}>{card.name}</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:5 }}>
+              <Pill ch={rarOpt?.label||card.rarity} color={rarOpt?.color} s={{fontSize:10}}/>
+              <Pill ch={card.language} color={C.skyDk} s={{fontSize:10}}/>
+              {tcg && <Pill ch={tcg.emoji+" "+tcg.name} color={tcg.color} s={{fontSize:10}}/>}
             </div>
-            <div className="display" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.1, marginBottom: 5 }}>{card.name}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 5 }}>
-              <Pill color={rarityOpt?.color || P.skyDp} style={{ fontSize: 10 }}>{rarityOpt?.desc || card.rarity}</Pill>
-              <Pill color={P.skyDp} style={{ fontSize: 10 }}>{card.language}</Pill>
-              {card.color && <Pill color={P.sub} style={{ fontSize: 10 }}>{card.color}</Pill>}
-            </div>
-            <div style={{ fontSize: 11.5, color: P.sub, lineHeight: 1.65 }}>
-              <strong style={{ color: P.ink }}>{card.setName}</strong>
-              {card.type && <><br/>{card.type}</>}
-              {card.cost != null && ` · Cost ${card.cost}`}
-              {card.power && ` · ${card.power} PWR`}
-              {card.atk != null && ` · ATK ${card.atk} / DEF ${card.def}`}
-              {card.hp != null && ` · HP ${card.hp}`}
-              {card.nameJP && <><br/><span className="mono" style={{ fontSize: 11, color: P.dim }}>{card.nameJP}</span></>}
+            <div style={{ fontSize:11.5, color:C.sub, lineHeight:1.65 }}>
+              <strong style={{color:C.ink}}>{card.setName}</strong>
+              {card.nameJP && <><br/><span className="mono" style={{fontSize:11,color:C.dim}}>{card.nameJP}</span></>}
             </div>
           </div>
         </div>
 
         {/* Quick stats */}
-        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-          <div style={{ flex: 1, background: P.bgDeep, borderRadius: 10, padding: "8px 5px", textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: P.sub, marginBottom: 2 }}>BoBoa Match</div>
-            <div className="display" style={{ fontSize: 15, fontWeight: 700, color: card.confidence >= 85 ? P.sageDp : P.butterDp }}>{card.confidence}%</div>
+        <div style={{ display:"flex", gap:5, marginBottom:10 }}>
+          <div style={{ flex:1, background:C.deep, borderRadius:10, padding:"8px 4px", textAlign:"center" }}>
+            <div style={{ fontSize:9.5, color:C.sub, marginBottom:2 }}>BoBoa Match</div>
+            <div className="syne" style={{ fontSize:14, fontWeight:700, color:card.confidence>=85?C.sageDk:C.butterDk }}>{card.confidence}%</div>
           </div>
-          <div style={{ flex: 1, background: P.bgDeep, borderRadius: 10, padding: "8px 5px", textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: P.sub, marginBottom: 2 }}>BoBoaGrade</div>
-            <div className="display" style={{ fontSize: 15, fontWeight: 700, color: bgsOverall.color }}>{bgsOverall.value}</div>
-          </div>
-          <div style={{ flex: 1.2, background: toRgba(P.coral, 0.12), border: `1px solid ${toRgba(P.coral, 0.25)}`, borderRadius: 10, padding: "8px 5px", textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: P.coral, marginBottom: 2, fontWeight: 600 }}>🏯 Yuyu-tei Buy</div>
-            <div className="display" style={{ fontSize: 14, fontWeight: 700, color: P.coral }}>
-              {priceData?.yuyutei?.buy?.thb ? fmtTHB(priceData.yuyutei.buy.thb) : "—"}
+          {grade && (
+            <div style={{ flex:1, background:C.deep, borderRadius:10, padding:"8px 4px", textAlign:"center" }}>
+              <div style={{ fontSize:9.5, color:C.sub, marginBottom:2 }}>BoBoaGrade</div>
+              <div className="syne" style={{ fontSize:14, fontWeight:700, color:bgsColor(grade.overall?.bgs||0) }}>{grade.overall?.bgs?.toFixed(1)||"—"}</div>
             </div>
+          )}
+          <div style={{ flex:1.3, background:hex2rgb(C.coral,.1), border:`1px solid ${hex2rgb(C.coral,.25)}`, borderRadius:10, padding:"8px 4px", textAlign:"center" }}>
+            <div style={{ fontSize:9.5, color:C.coral, marginBottom:2, fontWeight:600 }}>🏯 Buy-back</div>
+            <div className="syne" style={{ fontSize:13, fontWeight:700, color:C.coral }}>{yuyutei?fmtTHB(yuyutei.buy.thb):"—"}</div>
           </div>
         </div>
 
         {/* Tabs */}
-        <div style={{ display: "flex", borderTop: `1px solid ${P.border}`, margin: "0 -16px" }}>
-          {[{ id: "prices", label: "Prices" }, { id: "sales", label: "Sales" }, { id: "condition", label: "Condition" }, { id: "details", label: "Details" }].map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)} style={{
-              flex: 1, background: "none", border: "none",
-              borderBottom: tab === t.id ? `2px solid ${P.peachDp}` : "2px solid transparent",
-              color: tab === t.id ? P.peachDp : P.sub,
-              padding: "11px 2px",
-              fontSize: 12.5, fontWeight: tab === t.id ? 700 : 500,
-              cursor: "pointer",
-            }}>{t.label}</button>
+        <div style={{ display:"flex", borderTop:`1px solid ${C.bord}`, margin:"0 -16px" }}>
+          {[{id:"prices",label:"Prices"},{id:"sales",label:"Sales"},{id:"grade",label:"BoBoaGrade"},{id:"info",label:"Info"}].map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{ flex:1, background:"none", border:"none", borderBottom:`2px solid ${tab===t.id?C.peachDk:"transparent"}`, color:tab===t.id?C.peachDk:C.sub, padding:"11px 2px", fontSize:12, fontWeight:tab===t.id?700:500, cursor:"pointer" }}>{t.label}</button>
           ))}
         </div>
       </div>
 
-      <div style={{ padding: "14px 16px 100px", display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ padding:"14px 16px 100px", display:"flex", flexDirection:"column", gap:12 }}>
 
-        {/* ─── PRICES ─── */}
-        {tab === "prices" && (
-          priceLoading ? (
-            <Card>
-              <div style={{ padding: "40px 20px", textAlign: "center" }}>
-                <div style={{ width: 40, height: 40, border: `3px solid ${P.peach}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 14px" }}/>
-                <div style={{ fontSize: 13, color: P.sub }}>Fetching prices from {SOURCES.length} sources…</div>
-              </div>
-            </Card>
-          ) : !priceData?.ok ? (
-            <Card>
-              <div style={{ padding: "32px 20px", textAlign: "center" }}>
-                <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: P.sub, marginBottom: 4 }}>No price data</div>
-                <div style={{ fontSize: 12, color: P.dim }}>{priceData?.error || "Card/rarity not tracked yet"}</div>
-              </div>
-            </Card>
-          ) : (
-            <>
-              {/* ═══ YUYU-TEI ANCHOR — Buy-back (guaranteed sell) + Retail ═══ */}
-              {priceData.yuyutei && (
-                <Card accentColor={P.coral} className="fu1" style={{ borderColor: toRgba(P.coral, 0.45) }}>
-                  <div style={{ padding: "14px 16px 6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 18 }}>🏯</span>
-                      <div>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: P.ink }}>Yuyu-tei · Tokyo</div>
-                        <div style={{ fontSize: 11, color: P.sub }}>Most reliable JP market anchor</div>
-                      </div>
+        {/* ── PRICES ── */}
+        {tab==="prices" && (
+          <>
+            {yuyutei && (
+              <Card accentColor={C.coral} className="r1" s={{ borderColor:hex2rgb(C.coral,.4) }}>
+                <div style={{ padding:"14px 16px 6px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ fontSize:18 }}>🏯</span>
+                    <div><div style={{ fontSize:14, fontWeight:700 }}>Yuyu-tei · Tokyo</div><div style={{ fontSize:11, color:C.sub }}>Primary market anchor</div></div>
+                  </div>
+                  <Pill ch="Verified" color={C.sageDk} s={{fontSize:10}}/>
+                </div>
+                <div style={{ padding:"10px 16px 14px" }}>
+                  <div style={{ display:"flex", alignItems:"flex-end", justifyContent:"space-between", gap:10 }}>
+                    <div>
+                      <div style={{ fontSize:10.5, color:C.sub, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:3 }}>買取価格 · Buy-back</div>
+                      <div className="syne" style={{ fontSize:30, fontWeight:700, color:C.coral, lineHeight:1 }}>{fmtTHB(yuyutei.buy.thb)}</div>
+                      <div style={{ fontSize:11, color:C.sub, marginTop:3 }} className="mono">{fmtJPY(yuyutei.buy.jpy)} · {fmtUSD(yuyutei.buy.usd)}</div>
                     </div>
-                    <Pill color={P.sageDp} style={{ fontSize: 10 }}>LIVE</Pill>
-                  </div>
-
-                  {/* Buy-back (what shop pays YOU) — the headline */}
-                  <div style={{ padding: "10px 16px 14px" }}>
-                    <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10 }}>
-                      <div>
-                        <div style={{ fontSize: 10.5, color: P.sub, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 3 }}>
-                          買取価格 · Buy-back (guaranteed sell)
-                        </div>
-                        <div className="display" style={{ fontSize: 32, fontWeight: 700, color: P.coral, lineHeight: 1 }}>
-                          {fmtTHB(priceData.yuyutei.buy.thb)}
-                        </div>
-                        <div style={{ fontSize: 11.5, color: P.sub, marginTop: 3 }} className="mono">
-                          {fmtJPY(priceData.yuyutei.buy.jpy)} · {fmtUSD(priceData.yuyutei.buy.usd)}
-                        </div>
-                      </div>
-                      {priceData.yuyutei.buy.url && (
-                        <a href={priceData.yuyutei.buy.url} target="_blank" rel="noopener noreferrer">
-                          <SmallBtn primary>買取 →</SmallBtn>
-                        </a>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Divider + retail sell price */}
-                  <div style={{ borderTop: `1px solid ${P.line}`, padding: "11px 16px 14px" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <div>
-                        <div style={{ fontSize: 10.5, color: P.sub, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 3 }}>
-                          販売価格 · Retail (Yuyu-tei selling)
-                        </div>
-                        <div className="display" style={{ fontSize: 20, fontWeight: 700, color: P.ink, lineHeight: 1 }}>
-                          {fmtTHB(priceData.yuyutei.sell.thb)}
-                          <span style={{ fontSize: 13, color: P.sub, fontWeight: 500, marginLeft: 8 }} className="mono">
-                            {fmtJPY(priceData.yuyutei.sell.jpy)}
-                          </span>
-                        </div>
-                      </div>
-                      {priceData.yuyutei.sell.url && (
-                        <a href={priceData.yuyutei.sell.url} target="_blank" rel="noopener noreferrer">
-                          <SmallBtn>販売 →</SmallBtn>
-                        </a>
-                      )}
-                    </div>
-                    {priceData.yuyutei.buy.thb > 0 && priceData.yuyutei.sell.thb > 0 && (
-                      <div style={{
-                        marginTop: 10,
-                        background: toRgba(P.butter, 0.22),
-                        border: `1px solid ${toRgba(P.butterDp, 0.25)}`,
-                        borderRadius: 9,
-                        padding: "7px 10px",
-                        fontSize: 11.5,
-                        color: P.sub,
-                      }}>
-                        <strong style={{ color: P.ink }}>Spread:</strong>{" "}
-                        {fmtTHB(priceData.yuyutei.sell.thb - priceData.yuyutei.buy.thb)}{" "}
-                        <span style={{ color: P.dim }}>
-                          ({Math.round((1 - priceData.yuyutei.buy.thb / priceData.yuyutei.sell.thb) * 100)}% shop margin)
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </Card>
-              )}
-
-              {/* Multi-source combined average */}
-              <Card className="fu2">
-                <div style={{ padding: "14px 16px" }}>
-                  <div style={{ fontSize: 10.5, color: P.sub, marginBottom: 4, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                    Multi-source average · {priceData.sources.length} sources
-                  </div>
-                  <div className="display" style={{ fontSize: 22, fontWeight: 700, color: P.ink, lineHeight: 1 }}>
-                    {fmtTHB(priceData.combined.range.latestTHB)}
-                  </div>
-                  <div style={{ fontSize: 11, color: P.sub, marginTop: 3 }} className="mono">
-                    Range {fmtTHB(priceData.combined.range.minTHB)} – {fmtTHB(priceData.combined.range.maxTHB)}
+                    <a href={yuyutei.buy.url} target="_blank" rel="noopener noreferrer"><SBtn>買取 →</SBtn></a>
                   </div>
                 </div>
-              </Card>
-
-              {/* Chart */}
-              <Card className="fu3">
-                <SectionHeader accent={P.peachDp}>Price history · All sources combined</SectionHeader>
-                <div style={{ padding: "14px 0 10px" }}>
-                  <InteractiveChart
-                    chart={priceData.combined.chart}
-                    allSales={priceData.combined.allSales}
-                    color={P.peachDp}
-                    timeframe={timeframe}
-                    onTimeframeChange={setTimeframe}
-                  />
+                <div style={{ borderTop:`1px solid ${C.line}`, padding:"10px 16px 14px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <div>
+                      <div style={{ fontSize:10.5, color:C.sub, letterSpacing:"0.06em", textTransform:"uppercase", marginBottom:3 }}>販売価格 · Retail</div>
+                      <div className="syne" style={{ fontSize:19, fontWeight:700, color:C.ink, lineHeight:1 }}>
+                        {fmtTHB(yuyutei.sell.thb)} <span style={{ fontSize:12, color:C.sub, fontWeight:500 }} className="mono">{fmtJPY(yuyutei.sell.jpy)}</span>
+                      </div>
+                    </div>
+                    <a href={yuyutei.sell.url} target="_blank" rel="noopener noreferrer"><SBtn>販売 →</SBtn></a>
+                  </div>
+                  {yuyutei.buy.thb>0 && yuyutei.sell.thb>0 && (
+                    <div style={{ marginTop:10, background:hex2rgb(C.butter,.2), border:`1px solid ${hex2rgb(C.butterDk,.25)}`, borderRadius:9, padding:"7px 10px", fontSize:11.5, color:C.sub }}>
+                      <strong style={{color:C.ink}}>Spread:</strong> {fmtTHB(yuyutei.sell.thb-yuyutei.buy.thb)} <span style={{color:C.dim}}>({Math.round((1-yuyutei.buy.thb/yuyutei.sell.thb)*100)}% shop margin)</span>
+                    </div>
+                  )}
                 </div>
               </Card>
+            )}
 
-              {/* Per-source summary */}
-              <Card className="fu4">
-                <SectionHeader>By source · Latest sold</SectionHeader>
-                {priceData.sources.map((s, i) => {
+            {priceData?.chart?.length>0 && (
+              <Card className="r2">
+                <Hdr accent={C.peachDk}>Price history · Multi-source</Hdr>
+                <div style={{ padding:"14px 0 10px" }}>
+                  <PriceChart chart={priceData.chart} color={C.peachDk} timeframe={tf} onTF={setTf}/>
+                </div>
+              </Card>
+            )}
+
+            {/* Mercari JP deep link */}
+            <Card className="r3" s={{ borderColor:hex2rgb(C.roseDk,.4) }}>
+              <div style={{ padding:"14px 16px" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+                  <span style={{ fontSize:20 }}>🟠</span>
+                  <div>
+                    <div style={{ fontSize:14, fontWeight:700 }}>Mercari Japan · Image search</div>
+                    <div style={{ fontSize:11.5, color:C.sub }}>Tap to search listings that match your card photo</div>
+                  </div>
+                </div>
+                <div style={{ background:C.deep, borderRadius:9, padding:"8px 12px", marginBottom:12, fontSize:11, color:C.sub }} className="mono">
+                  {searchQ}
+                </div>
+                <a href={mercariUrl} target="_blank" rel="noopener noreferrer" style={{ display:"block" }}>
+                  <PBtn s={{ background:C.roseDk, boxShadow:`0 6px 18px ${hex2rgb(C.roseDk,.3)}` }}>
+                    <span>🟠</span> Open Mercari Japan →
+                  </PBtn>
+                </a>
+                <div style={{ fontSize:11, color:C.dim, marginTop:8, textAlign:"center" }}>
+                  Opens in browser — search then compare listing photos with yours
+                </div>
+              </div>
+            </Card>
+
+            {/* Per-source latest */}
+            {priceData?.sources && (
+              <Card className="r4">
+                <Hdr>All sources · Latest price</Hdr>
+                {priceData.sources.map((s,i)=>{
                   const latest = s.sales[0];
-                  if (!latest) return null;
+                  if(!latest) return null;
+                  const href = s.id==="yuyutei" ? yuyutei?.sell?.url : priceData.srcLinks[s.id]?.(searchQ);
                   return (
-                    <a key={s.source.id} href={s.source.url(card.language === "JP" ? (card.nameJP || card.name) + " " + card.cardId : card.name + " " + card.cardId)}
-                      target="_blank" rel="noopener noreferrer">
-                      <div style={{
-                        display: "flex", alignItems: "center", gap: 12,
-                        padding: "12px 16px",
-                        borderBottom: i < priceData.sources.length - 1 ? `1px solid ${P.line}` : "none",
-                        cursor: "pointer",
-                      }}>
-                        <span style={{ fontSize: 18 }}>{s.source.icon}</span>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: s.source.color }}>{s.source.name}</div>
-                          <div style={{ fontSize: 10.5, color: P.dim }} className="mono">
-                            {latest.date} · {s.source.region} · {s.source.currency}
-                          </div>
+                    <a key={s.id} href={href} target="_blank" rel="noopener noreferrer">
+                      <div style={{ display:"flex", alignItems:"center", gap:11, padding:"11px 16px", borderBottom:i<priceData.sources.length-1?`1px solid ${C.line}`:"none", cursor:"pointer" }}>
+                        <span style={{ fontSize:17 }}>{s.icon}</span>
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:13, fontWeight:600, color:s.color }}>{s.name}</div>
+                          <div style={{ fontSize:10.5, color:C.dim }} className="mono">{latest.date} · {s.cur} · {s.region}</div>
                         </div>
-                        <div style={{ textAlign: "right" }}>
-                          <div className="display" style={{ fontSize: 15, fontWeight: 700 }}>{fmtTHB(latest.priceTHB)}</div>
-                          <div style={{ fontSize: 10, color: P.dim }} className="mono">{fmtUSD(latest.priceUSD)}</div>
+                        <div style={{ textAlign:"right" }}>
+                          <div className="syne" style={{ fontSize:15, fontWeight:700 }}>{fmtTHB(latest.priceTHB)}</div>
+                          <div style={{ fontSize:10.5, color:C.dim }} className="mono">{fmtUSD(latest.priceUSD)}</div>
                         </div>
                       </div>
                     </a>
                   );
                 })}
               </Card>
-
-              {/* External search */}
-              <Card className="fu5">
-                <SectionHeader>Browse sources</SectionHeader>
-                {externalLinks.map((l, i, arr) => (
-                  <a key={l.id} href={l.url(l.q ? decodeURIComponent(l.q) : card.name)} target="_blank" rel="noopener noreferrer">
-                    <div style={{
-                      display: "flex", alignItems: "center", gap: 11,
-                      padding: "12px 16px",
-                      borderBottom: i < arr.length - 1 ? `1px solid ${P.line}` : "none",
-                    }}>
-                      <span style={{ fontSize: 17 }}>{l.icon}</span>
-                      <span style={{ fontSize: 13, fontWeight: 500, flex: 1, color: l.color }}>Search {l.name}</span>
-                      <span style={{ color: P.dim, fontSize: 13 }}>›</span>
-                    </div>
-                  </a>
-                ))}
-              </Card>
-            </>
-          )
+            )}
+          </>
         )}
 
-        {/* ─── SALES LIST ─── */}
-        {tab === "sales" && (
-          priceLoading || !priceData?.ok ? (
-            <Card>
-              <div style={{ padding: "40px 20px", textAlign: "center", color: P.sub, fontSize: 13 }}>Loading sales…</div>
-            </Card>
-          ) : (
+        {/* ── SALES LIST ── */}
+        {tab==="sales" && (
+          <Card className="r1">
+            <Hdr accent={C.peachDk}>Last sold · 3 years · Newest first</Hdr>
+            <div style={{ padding:"8px 0", borderBottom:`1px solid ${C.line}` }}>
+              <div style={{ display:"flex", gap:5, overflowX:"auto", padding:"4px 12px" }}>
+                <button onClick={()=>setSrcFilter(null)} style={{ background:!srcFilter?C.peachDk:"transparent", color:!srcFilter?"#fff":C.sub, border:`1px solid ${!srcFilter?C.peachDk:C.bord}`, borderRadius:8, padding:"5px 11px", fontSize:11, fontWeight:600, whiteSpace:"nowrap", flexShrink:0, cursor:"pointer" }}>All</button>
+                {SOURCES.filter(s=>priceData?.sources?.find(ps=>ps.id===s.id)).map(s=>(
+                  <button key={s.id} onClick={()=>setSrcFilter(s.id)} style={{ background:srcFilter===s.id?s.color:"transparent", color:srcFilter===s.id?"#fff":C.sub, border:`1px solid ${srcFilter===s.id?s.color:C.bord}`, borderRadius:8, padding:"5px 11px", fontSize:11, fontWeight:600, whiteSpace:"nowrap", flexShrink:0, cursor:"pointer" }}>
+                    {s.icon} {s.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{ maxHeight:380, overflowY:"auto" }}>
+              {sales.length===0?(
+                <div style={{ padding:"28px", textAlign:"center", color:C.dim, fontSize:13 }}>No sales for this filter</div>
+              ):sales.map((s,i)=>(
+                <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 16px", borderBottom:i<sales.length-1?`1px solid ${C.line}`:"none" }}>
+                  <div>
+                    <div style={{ fontSize:11, color:s.sourceColor, fontWeight:600, marginBottom:2 }}>{s.icon} {s.sourceName}</div>
+                    <div style={{ fontSize:12, color:C.sub }} className="mono">{s.date}</div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div className="syne" style={{ fontSize:15, fontWeight:700 }}>{fmtTHB(s.priceTHB)}</div>
+                    <div style={{ fontSize:11, color:C.dim }} className="mono">{fmtUSD(s.priceUSD)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {/* ── BOBOAGRADE ── */}
+        {tab==="grade" && (
+          grade ? (
             <>
-              <Card className="fu1">
-                <SectionHeader accent={P.peachDp}>Recent sold · Last 3 years · Latest first</SectionHeader>
-                <div style={{ padding: "10px 16px", fontSize: 12, color: P.sub, background: P.bgDeep, borderBottom: `1px solid ${P.line}` }}>
-                  Showing <strong style={{ color: P.ink }}>{card.name}</strong> · <strong style={{ color: P.ink }}>{card.rarity}</strong> · <strong style={{ color: P.ink }}>{card.language}</strong>. Filter by source below.
+              {/* Grade confidence warning */}
+              {grade.imageQuality && grade.imageQuality!=="good" && (
+                <div className="r1" style={{ background:hex2rgb(C.butterDk,.12), border:`1px solid ${hex2rgb(C.butterDk,.35)}`, borderRadius:14, padding:"12px 16px", fontSize:13, color:C.ink }}>
+                  ⚠ Image quality: <strong>{grade.imageQuality}</strong> — grading accuracy may be reduced. For best results, photograph the card flat under bright, even lighting.
                 </div>
-                <SalesList sales={priceData.combined.allSales} sourceFilter={sourceFilter} onFilter={setSourceFilter}/>
+              )}
+
+              {/* Overall grade */}
+              <Card accentColor={bgsColor(grade.overall?.bgs||0)} className="r1" s={{ borderColor:hex2rgb(bgsColor(grade.overall?.bgs||0),.5) }}>
+                <div style={{ padding:"16px 18px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:14 }}>
+                  <div>
+                    <div style={{ fontSize:10.5, color:C.sub, marginBottom:4, letterSpacing:".06em" }}>◆ BOBOAGRADE</div>
+                    <div className="syne" style={{ fontSize:18, fontWeight:800, color:bgsColor(grade.overall?.bgs||0), lineHeight:1.15, marginBottom:6 }}>{grade.overall?.label||"—"}</div>
+                    <Pill ch={grade.overall?.estimatedPSA||"—"} color={bgsColor(grade.overall?.bgs||0)} s={{fontSize:11}}/>
+                    <div style={{ fontSize:12, color:C.sub, marginTop:8, maxWidth:200, lineHeight:1.55 }}>{grade.overall?.submissionAdvice}</div>
+                  </div>
+                  <div style={{ textAlign:"right", flexShrink:0 }}>
+                    <div className="syne" style={{ fontSize:58, fontWeight:800, color:bgsColor(grade.overall?.bgs||0), lineHeight:.9 }}>
+                      {grade.overall?.bgs?.toFixed(1)||"—"}
+                    </div>
+                    <div style={{ fontSize:11, color:C.sub, marginTop:2 }}>/10.0</div>
+                    <div style={{ fontSize:10, color:C.dim, marginTop:2 }}>{grade.gradingConfidence}% confident</div>
+                  </div>
+                </div>
+                {grade.overall?.summary && (
+                  <div style={{ padding:"10px 18px 14px", borderTop:`1px solid ${C.line}`, fontSize:13, color:C.sub, lineHeight:1.65 }}>
+                    {grade.overall.summary}
+                  </div>
+                )}
+              </Card>
+
+              {/* Subgrades */}
+              <Card className="r2">
+                <Hdr accent={C.sageDk}>Subgrade breakdown</Hdr>
+                {[
+                  { key:"centering", label:"Centering", icon:"⊞", extra: grade.centering ? `${grade.centering.leftBorderPct||"?"}% / ${grade.centering.rightBorderPct||"?"}% sides` : "" },
+                  { key:"corners",   label:"Corners",   icon:"◤", extra: grade.corners?.worstCorner ? `Worst: ${grade.corners.worstCorner}` : "" },
+                  { key:"edges",     label:"Edges",     icon:"—", extra: grade.edges?.worstEdge ? `Worst: ${grade.edges.worstEdge}` : "" },
+                  { key:"surface",   label:"Surface",   icon:"◻", extra: grade.surface?.defectsFound?.join(", ") || "" },
+                ].map((sub,i,arr)=>{
+                  const g = grade[sub.key];
+                  if(!g) return null;
+                  const bgs = g.bgs || 0;
+                  const color = bgsColor(bgs);
+                  return (
+                    <div key={sub.key} style={{ padding:"13px 18px", borderBottom:i<arr.length-1?`1px solid ${C.line}`:"none" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
+                        <span style={{ fontSize:14, fontWeight:600 }}>{sub.icon} {sub.label}</span>
+                        <div style={{ display:"flex", gap:8, alignItems:"baseline" }}>
+                          <span style={{ fontSize:10.5, color:C.dim }}>BGS</span>
+                          <span className="syne" style={{ fontSize:22, fontWeight:700, color }}>{bgs.toFixed(1)}</span>
+                        </div>
+                      </div>
+                      <div style={{ height:5, background:C.deep, borderRadius:99, overflow:"hidden", marginBottom:6 }}>
+                        <div style={{ height:"100%", width:`${g.score||0}%`, background:color, borderRadius:99, transition:"width 1s" }}/>
+                      </div>
+                      {sub.extra && <div style={{ fontSize:11.5, color:C.butterDk, marginBottom:3, fontWeight:600 }}>{sub.extra}</div>}
+                      {g.notes && <div style={{ fontSize:11, color:C.sub, lineHeight:1.5 }}>{g.notes}</div>}
+                    </div>
+                  );
+                })}
+              </Card>
+
+              {/* Corner grid */}
+              <Card className="r3">
+                <Hdr>Corner zoom · 28% crop · 4× stitched</Hdr>
+                <div style={{ padding:"12px 16px" }}>
+                  <img src={photos.corners} alt="corners" style={{ width:"100%", borderRadius:10, border:`1px solid ${C.line}` }}/>
+                  <div style={{ marginTop:9, fontSize:12, color:C.sub, lineHeight:1.55 }}>TL · TR · BL · BR — each corner extracted from the original photo at full resolution.</div>
+                </div>
+              </Card>
+
+              {/* BGS Reference */}
+              <Card className="r4">
+                <Hdr>BGS Grade Reference</Hdr>
+                <div style={{ padding:"6px 0" }}>
+                  {[
+                    {g:"10.0",label:"PRISTINE (Black Label)",req:"All subs 10.0 — Perfect",color:C.lavDk},
+                    {g:"10",  label:"GEM MINT",             req:"All subs ≥ 9.5",          color:C.butterDk},
+                    {g:"9.5", label:"GEM MINT",             req:"All subs ≥ 9.0",          color:C.sageDk},
+                    {g:"9",   label:"MINT",                 req:"All subs ≥ 8.5",          color:C.skyDk},
+                    {g:"8.5", label:"NM-MT+",               req:"All subs ≥ 8.0",          color:C.peachDk},
+                    {g:"8",   label:"NM-MT",                req:"Light wear on edges",     color:C.coral},
+                  ].map((r,i,arr)=>(
+                    <div key={r.g} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"9px 18px", borderBottom:i<arr.length-1?`1px solid ${C.line}`:"none" }}>
+                      <div>
+                        <span className="syne" style={{ fontSize:14, fontWeight:700, color:r.color }}>BGS {r.g}</span>
+                        <span style={{ fontSize:12, color:C.sub, marginLeft:8 }}>{r.label}</span>
+                      </div>
+                      <span className="mono" style={{ fontSize:11, color:C.dim }}>{r.req}</span>
+                    </div>
+                  ))}
+                </div>
               </Card>
             </>
+          ) : (
+            <Card className="r1">
+              <div style={{ padding:"32px 20px", textAlign:"center" }}>
+                <div style={{ fontSize:28, marginBottom:8 }}>⚠️</div>
+                <div style={{ fontSize:14, fontWeight:600, color:C.sub, marginBottom:6 }}>Grading unavailable</div>
+                <div style={{ fontSize:12, color:C.dim, lineHeight:1.6 }}>
+                  {gradeResult?.error || "The AI could not grade this image."}<br/>
+                  For best results: photograph the card flat on a plain background under bright, even light (no flash).
+                </div>
+              </div>
+            </Card>
           )
         )}
 
-        {/* ─── CONDITION / BGS ─── */}
-        {tab === "condition" && (
+        {/* ── INFO ── */}
+        {tab==="info" && (
           <>
-            <Card accentColor={bgsOverall.color} className="fu1" style={{ borderColor: toRgba(bgsOverall.color, 0.6) }}>
-              <div style={{ padding: "16px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 14 }}>
-                <div>
-                  <div style={{ fontSize: 10.5, color: P.sub, marginBottom: 3, letterSpacing: "0.06em" }}>◆ BOBOAGRADE</div>
-                  <div className="display" style={{ fontSize: 18, fontWeight: 700, color: bgsOverall.color, lineHeight: 1.15 }}>
-                    {bgsOverall.grade}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: P.sub, marginTop: 6, maxWidth: 180, lineHeight: 1.55 }}>
-                    Evaluated against BGS 10 Black Label criteria.
-                  </div>
-                </div>
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div className="display" style={{ fontSize: 54, fontWeight: 700, color: bgsOverall.color, lineHeight: 0.9 }}>
-                    {bgsOverall.value}
-                  </div>
-                  <div style={{ fontSize: 11, color: P.sub, marginTop: 2 }}>/ 10.0</div>
-                </div>
-              </div>
-            </Card>
-
-            <Card className="fu2">
-              <SectionHeader accent={P.sageDp}>Subgrade breakdown</SectionHeader>
-              {BGS_CRITERIA.map((c, i) => {
-                const s = card.pq?.[c.key] || 85;
-                const bgs = bgsRelative(s);
-                const color = bgs >= 9.5 ? P.lavDp : bgs >= 9 ? P.sageDp : bgs >= 8 ? P.butterDp : bgs >= 7 ? P.peachDp : P.coral;
-                return (
-                  <div key={c.key} style={{ padding: "12px 16px", borderBottom: i < BGS_CRITERIA.length - 1 ? `1px solid ${P.line}` : "none" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                      <span style={{ fontSize: 13.5, fontWeight: 600 }}>{c.label}</span>
-                      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-                        <span style={{ fontSize: 10, color: P.dim }}>BGS</span>
-                        <span className="display" style={{ fontSize: 20, fontWeight: 700, color }}>{bgs.toFixed(1)}</span>
-                      </div>
-                    </div>
-                    <div style={{ height: 5, background: P.bgDeep, borderRadius: 99, overflow: "hidden", marginBottom: 5 }}>
-                      <div style={{ height: "100%", width: `${s}%`, background: color, borderRadius: 99, transition: "width 1s" }}/>
-                    </div>
-                    <div style={{ fontSize: 11, color: P.dim, lineHeight: 1.5 }}>{c.desc}</div>
-                  </div>
-                );
-              })}
-            </Card>
-
-            <Card className="fu3">
-              <SectionHeader>Corner analysis · 4x zoom</SectionHeader>
-              <div style={{ padding: "12px 16px" }}>
-                <img src={photos.corners} alt="corners" style={{ width: "100%", borderRadius: 10, border: `1px solid ${P.line}` }}/>
-                <div style={{ marginTop: 9, fontSize: 11.5, color: P.sub, lineHeight: 1.55 }}>
-                  TL · TR · BL · BR — each corner cropped at 28% and stitched into 2×2 grid.
-                </div>
-              </div>
-            </Card>
-
-            {card.pq?.notes && (
-              <Card className="fu4">
-                <SectionHeader accent={P.peachDp}>BoBoa AI · Condition notes</SectionHeader>
-                <div style={{ padding: "12px 16px", fontSize: 12.5, color: P.sub, lineHeight: 1.65 }}>{card.pq.notes}</div>
-              </Card>
-            )}
-          </>
-        )}
-
-        {/* ─── DETAILS ─── */}
-        {tab === "details" && (
-          <>
-            <Card className="fu1">
-              <SectionHeader>Card details</SectionHeader>
-              <div style={{ padding: "14px 16px", display: "grid", gap: 10 }}>
+            <Card className="r1">
+              <Hdr>Card details</Hdr>
+              <div style={{ padding:"14px 16px" }}>
                 {[
-                  ["Card ID",     card.cardId],
-                  ["Name",        card.name],
-                  ["Name (JP)",   card.nameJP],
-                  ["Set",         `${card.setName}${card.set ? ` · ${card.set}` : ""}`],
-                  ["TCG",         tcg?.name],
-                  ["Rarity",      rarityOpt?.desc],
-                  ["Language",    LANGUAGES.find(l=>l.id===card.language)?.label],
-                  ["Type",        card.type],
-                  ["Color/Attr",  card.color || card.attribute],
-                  ["Cost",        card.cost],
-                  ["Power/ATK",   card.power || card.atk],
-                  ["DEF",         card.def],
-                  ["HP",          card.hp],
-                  ["Level",       card.level],
-                ].filter(([,v]) => v != null && v !== "").map(([k, v]) => (
-                  <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                    <span style={{ color: P.sub }}>{k}</span>
-                    <span style={{ fontWeight: 600, textAlign: "right" }}>{v}</span>
+                  ["Card ID",   card.cardId],
+                  ["Name",      card.name],
+                  ["JP Name",   card.nameJP],
+                  ["Set",       `${card.setName}${card.set?` · ${card.set}`:""}` ],
+                  ["Rarity",    `${rarOpt?.label} (${card.rarity})`],
+                  ["Language",  LANGUAGES.find(l=>l.id===card.language)?.label],
+                  ["In DB",     card.inDB?"Yes — prices available":"No — AI identification only"],
+                  ["AI Match",  `${card.confidence}%`],
+                  ["Evidence",  card.evidence],
+                ].filter(([,v])=>v!=null&&v!=="").map(([k,v])=>(
+                  <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"7px 0", borderBottom:`1px solid ${C.line}`, fontSize:13 }}>
+                    <span style={{ color:C.sub }}>{k}</span>
+                    <span style={{ fontWeight:600, textAlign:"right", maxWidth:"65%" }}>{v}</span>
                   </div>
                 ))}
               </div>
             </Card>
 
-            {card.ability && (
-              <Card className="fu2">
-                <SectionHeader>Ability</SectionHeader>
-                <div style={{ padding: "12px 16px", fontSize: 13, lineHeight: 1.7, color: P.ink }}>
-                  {card.ability}
-                </div>
-              </Card>
-            )}
-
-            {card.traits?.length > 0 && (
-              <Card className="fu3">
-                <SectionHeader>Traits</SectionHeader>
-                <div style={{ padding: "12px 16px", display: "flex", gap: 5, flexWrap: "wrap" }}>
-                  {card.traits.map(t => <Pill key={t} color={P.sub}>{t}</Pill>)}
-                </div>
-              </Card>
-            )}
+            <Card className="r2">
+              <Hdr>Captured photos · ⬡ {user.name}</Hdr>
+              <div style={{ padding:"12px", display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                {[{label:"Full card",src:photos.full,aspect:"63/88"},{label:"4 corners",src:photos.corners,aspect:"1/1"}].map((p,i)=>(
+                  <div key={i} style={{ background:C.deep, borderRadius:10, overflow:"hidden", border:`1px solid ${C.line}` }}>
+                    <img src={p.src} alt={p.label} style={{ width:"100%", aspectRatio:p.aspect, objectFit:"cover", display:"block" }}/>
+                    <div style={{ padding:"6px 10px", fontSize:10.5, fontWeight:600 }}>{p.label}</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
           </>
         )}
-
       </div>
 
-      <div style={{ position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 430, background: "rgba(250,247,242,0.96)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", borderTop: `1px solid ${P.border}`, padding: "11px 16px 28px", display: "flex", gap: 10 }}>
-        <SmallBtn onClick={onRescan} style={{ flex: 1, padding: "12px" }}>📷 Scan Again</SmallBtn>
-        <PrimaryBtn style={{ flex: 2, padding: "12px" }}>Push to Vault →</PrimaryBtn>
+      <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, background:"rgba(250,247,242,.96)", backdropFilter:"blur(16px)", borderTop:`1px solid ${C.bord}`, padding:"11px 16px 28px", display:"flex", gap:10 }}>
+        <SBtn onClick={onRescan} s={{ flex:1, padding:"12px" }}>📷 Scan Again</SBtn>
+        <PBtn s={{ flex:2, padding:"12px" }}>Push to Vault →</PBtn>
       </div>
     </div>
   );
@@ -2145,27 +1539,29 @@ function ResultScreen({ photos, card, user, onRescan }) {
    ROOT
 ═══════════════════════════════════════════════════════════════════════════ */
 export default function App() {
-  const [screen,   setScreen]   = useState("login");
-  const [user,     setUser]     = useState(null);
-  const [ctx,      setCtx]      = useState(null);  // { tcgType, language }
-  const [photos,   setPhotos]   = useState(null);
-  const [aiResult, setAiResult] = useState(null);
-  const [card,     setCard]     = useState(null);
+  const [screen,  setScreen]  = useState("login");
+  const [user,    setUser]    = useState(null);
+  const [ctx,     setCtx]     = useState(null);
+  const [photos,  setPhotos]  = useState(null);
+  const [aiData,  setAiData]  = useState(null);
+  const [card,    setCard]    = useState(null);
 
-  const login    = useCallback(u => { setUser(u); setScreen("welcome"); }, []);
-  const logout   = useCallback(()=> { setUser(null); setScreen("login"); }, []);
-  const start    = useCallback(c => { setCtx(c); setScreen("camera"); }, []);
-  const back     = useCallback(()=> setScreen("welcome"), []);
-  const captured = useCallback(p => { setPhotos(p); setScreen("processing"); }, []);
-  const procDone = useCallback(r => { setAiResult(r); setScreen("rarity"); }, []);
-  const confirm  = useCallback(c => { setCard(c); setScreen("result"); }, []);
-  const rescan   = useCallback(()=> { setPhotos(null); setAiResult(null); setCard(null); setScreen("camera"); }, []);
+  const login    = useCallback(u  => { setUser(u); setScreen("welcome"); }, []);
+  const logout   = useCallback(()  => { setUser(null); setScreen("login"); }, []);
+  const start    = useCallback(c  => { setCtx(c); setScreen("capture"); }, []);
+  const captured = useCallback(p  => { setPhotos(p); setScreen("processing"); }, []);
+  const procDone = useCallback(r  => { setAiData(r); setScreen("picker"); }, []);
+  const picked   = useCallback(c  => { setCard(c); setScreen("rarity"); }, []);
+  const rarityOk = useCallback(c  => { setCard(c); setScreen("result"); }, []);
+  const rescan   = useCallback(()  => { setPhotos(null); setAiData(null); setCard(null); setScreen("capture"); }, []);
+  const backToPicker = useCallback(()=> setScreen("picker"), []);
 
-  if (screen === "login")      return <LoginScreen onLogin={login}/>;
-  if (screen === "welcome")    return <WelcomeScreen user={user} onStart={start} onLogout={logout}/>;
-  if (screen === "camera")     return <CameraScreen user={user} ctx={ctx} onCapture={captured} onBack={back}/>;
-  if (screen === "processing") return <ProcessingScreen photos={photos} ctx={ctx} onDone={procDone}/>;
-  if (screen === "rarity")     return <RarityPickerScreen photos={photos} aiResult={aiResult} user={user} ctx={ctx} onConfirm={confirm} onRescan={rescan}/>;
-  if (screen === "result")     return <ResultScreen photos={photos} card={card} user={user} onRescan={rescan}/>;
+  if (screen==="login")      return <LoginScreen onLogin={login}/>;
+  if (screen==="welcome")    return <WelcomeScreen user={user} onStart={start} onLogout={logout}/>;
+  if (screen==="capture")    return <CaptureScreen user={user} ctx={ctx} onCapture={captured} onBack={()=>setScreen("welcome")}/>;
+  if (screen==="processing") return <ProcessingScreen photos={photos} ctx={ctx} onDone={procDone}/>;
+  if (screen==="picker")     return <CardPickerScreen photos={photos} aiData={aiData} ctx={ctx} onSelect={picked} onRescan={rescan}/>;
+  if (screen==="rarity")     return <RarityScreen photos={photos} card={card} aiData={aiData} ctx={ctx} onConfirm={rarityOk} onBack={backToPicker}/>;
+  if (screen==="result")     return <ResultScreen photos={photos} card={card} aiData={aiData} user={user} onRescan={rescan}/>;
   return null;
 }
