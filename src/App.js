@@ -120,80 +120,78 @@ const LANGUAGES = [
 ];
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   RARITY SYSTEMS — per official sources
-   - One Piece: same rarity codes in JP and EN (C/UC/R/SR/L/SEC/SP + parallels)
-     Yuyu-tei adds M (Manga Rare), P (Parallel star), SR-P for Alt Art
-   - Yu-Gi-Oh! OCG JP (Yuyu-tei): N/NP/R/SR/UR/ULR(relief)/SE(secret)/PSE/20thSE
-     /QCSE(quarter century)/GR(ghost)/KC(king's court)/holo
-   - Yu-Gi-Oh! TCG EN: C/R/SR/UR/UtR/ScR/PScR/StR/CR/GR/QCSR
+   RARITY SYSTEMS — full names, with search tokens in target language.
+   searchJP = Japanese full name for searching on Mercari/Yahoo/Yuyu-tei
+   searchEN = English full name for searching on eBay/TCGPlayer
 ═══════════════════════════════════════════════════════════════════════════ */
 const RARITIES = {
   onepiece: {
     JP: [
-      {id:"C",    label:"C",       full:"Common",              color:C.dim},
-      {id:"UC",   label:"UC",      full:"Uncommon",            color:C.sageDk},
-      {id:"R",    label:"R",       full:"Rare",                color:C.skyDk},
-      {id:"SR",   label:"SR",      full:"Super Rare",          color:C.butterDk},
-      {id:"SR-P", label:"SR★",     full:"SR Parallel (Alt)",   color:C.peachDk},
-      {id:"L",    label:"L",       full:"Leader",              color:C.roseDk},
-      {id:"L-P",  label:"L★",      full:"Leader Parallel",     color:C.lavDk},
-      {id:"SEC",  label:"SEC",     full:"Secret Rare",         color:C.coral},
-      {id:"SEC-P",label:"SEC★",    full:"SEC Parallel",        color:C.rose},
-      {id:"SP",   label:"SP",      full:"Special (Manga)",     color:C.lav},
-      {id:"MR",   label:"MR",      full:"Manga Rare",          color:C.lavDk},
-      {id:"TR",   label:"TR",      full:"Treasure Rare",       color:C.butterDk},
-      {id:"PR",   label:"PR",      full:"Promo",               color:C.sub},
+      {id:"C",      label:"Common",             searchJP:"コモン",               searchEN:"Common",            color:C.dim},
+      {id:"UC",     label:"Uncommon",           searchJP:"アンコモン",            searchEN:"Uncommon",          color:C.sageDk},
+      {id:"R",      label:"Rare",               searchJP:"レア",                 searchEN:"Rare",              color:C.skyDk},
+      {id:"SR",     label:"Super Rare",         searchJP:"スーパーレア",          searchEN:"Super Rare",        color:C.butterDk},
+      {id:"SR-P",   label:"SR Parallel (Alt Art)",searchJP:"パラレル",            searchEN:"Parallel Alt Art",  color:C.peachDk},
+      {id:"L",      label:"Leader",             searchJP:"リーダー",             searchEN:"Leader",            color:C.roseDk},
+      {id:"L-P",    label:"Leader Parallel",    searchJP:"リーダーパラレル",      searchEN:"Leader Parallel",   color:C.lavDk},
+      {id:"SEC",    label:"Secret Rare",        searchJP:"シークレットレア",      searchEN:"Secret Rare",       color:C.coral},
+      {id:"SEC-P",  label:"Secret Rare Parallel",searchJP:"シークレットパラレル",   searchEN:"Secret Parallel",   color:C.rose},
+      {id:"SP",     label:"Special (Manga)",    searchJP:"SPカード",             searchEN:"Special",           color:C.lav},
+      {id:"MR",     label:"Manga Rare",         searchJP:"マンガレア",            searchEN:"Manga Rare",        color:C.lavDk},
+      {id:"TR",     label:"Treasure Rare",      searchJP:"トレジャーレア",        searchEN:"Treasure Rare",     color:C.butterDk},
+      {id:"PR",     label:"Promo",              searchJP:"プロモ",               searchEN:"Promo",             color:C.sub},
     ],
     EN: [
-      {id:"C",    label:"C",       full:"Common",              color:C.dim},
-      {id:"UC",   label:"UC",      full:"Uncommon",            color:C.sageDk},
-      {id:"R",    label:"R",       full:"Rare",                color:C.skyDk},
-      {id:"SR",   label:"SR",      full:"Super Rare",          color:C.butterDk},
-      {id:"SR-AA",label:"SR AA",   full:"SR Alternate Art",    color:C.peachDk},
-      {id:"L",    label:"L",       full:"Leader",              color:C.roseDk},
-      {id:"L-P",  label:"L AA",    full:"Leader Alternate Art",color:C.lavDk},
-      {id:"SEC",  label:"SEC",     full:"Secret Rare",         color:C.coral},
-      {id:"SEC-AA",label:"SEC AA", full:"SEC Alternate Art",   color:C.rose},
-      {id:"SP",   label:"SP",      full:"Special",             color:C.lav},
-      {id:"MR",   label:"Manga",   full:"Manga Rare",          color:C.lavDk},
-      {id:"TR",   label:"TR",      full:"Treasure Rare",       color:C.butterDk},
-      {id:"PR",   label:"Promo",   full:"Promo",               color:C.sub},
+      {id:"C",      label:"Common",             searchJP:"コモン",               searchEN:"Common",            color:C.dim},
+      {id:"UC",     label:"Uncommon",           searchJP:"アンコモン",            searchEN:"Uncommon",          color:C.sageDk},
+      {id:"R",      label:"Rare",               searchJP:"レア",                 searchEN:"Rare",              color:C.skyDk},
+      {id:"SR",     label:"Super Rare",         searchJP:"スーパーレア",          searchEN:"Super Rare",        color:C.butterDk},
+      {id:"SR-AA",  label:"SR Alternate Art",   searchJP:"パラレル",             searchEN:"Alternate Art",     color:C.peachDk},
+      {id:"L",      label:"Leader",             searchJP:"リーダー",             searchEN:"Leader",            color:C.roseDk},
+      {id:"L-P",    label:"Leader Alternate Art",searchJP:"リーダーパラレル",      searchEN:"Leader Alt Art",    color:C.lavDk},
+      {id:"SEC",    label:"Secret Rare",        searchJP:"シークレットレア",      searchEN:"Secret Rare",       color:C.coral},
+      {id:"SEC-AA", label:"Secret Alt Art",     searchJP:"シークレットパラレル",   searchEN:"Secret Alt Art",    color:C.rose},
+      {id:"SP",     label:"Special",            searchJP:"SPカード",             searchEN:"Special",           color:C.lav},
+      {id:"MR",     label:"Manga Rare",         searchJP:"マンガレア",            searchEN:"Manga Rare",        color:C.lavDk},
+      {id:"TR",     label:"Treasure Rare",      searchJP:"トレジャーレア",        searchEN:"Treasure Rare",     color:C.butterDk},
+      {id:"PR",     label:"Promo",              searchJP:"プロモ",               searchEN:"Promo",             color:C.sub},
     ],
   },
   yugioh: {
-    // Japanese OCG — Yuyu-tei naming convention
     JP: [
-      {id:"N",    label:"N",       full:"Normal (普通)",        color:C.dim},
-      {id:"NP",   label:"NP",      full:"Normal Parallel",     color:C.sage},
-      {id:"R",    label:"R",       full:"Rare (レア)",           color:C.skyDk},
-      {id:"RP",   label:"RP",      full:"Rare Parallel",       color:C.sky},
-      {id:"SR",   label:"SR",      full:"Super Rare (スーパー)",  color:C.butterDk},
-      {id:"UR",   label:"UR",      full:"Ultra Rare (ウルトラ)",  color:C.peachDk},
-      {id:"ULR",  label:"ULR",     full:"Ultimate / Relief (レリーフ)", color:C.roseDk},
-      {id:"SER",  label:"SE",      full:"Secret Rare (シークレット)", color:C.coral},
-      {id:"PSE",  label:"PSE",     full:"Prismatic Secret",    color:C.rose},
-      {id:"20TH", label:"20th SE", full:"20th Secret Rare",    color:C.lav},
-      {id:"QCSE", label:"QCSE",    full:"Quarter Century Secret", color:C.butterDk},
-      {id:"GR",   label:"GR",      full:"Ghost Rare (ゴースト)",   color:C.lavDk},
-      {id:"KC",   label:"KC",      full:"Kings Court / Collector", color:C.rose},
-      {id:"HOL",  label:"HOL",     full:"Holographic",         color:C.lavDk},
-      {id:"ORsr", label:"ORsr",    full:"Overrush Rare",       color:C.coral},
+      {id:"N",      label:"Normal (Common)",    searchJP:"ノーマル",             searchEN:"Common",            color:C.dim},
+      {id:"NP",     label:"Normal Parallel",    searchJP:"ノーマルパラレル",      searchEN:"Normal Parallel",   color:C.sage},
+      {id:"R",      label:"Rare",               searchJP:"レア",                 searchEN:"Rare",              color:C.skyDk},
+      {id:"RP",     label:"Rare Parallel",      searchJP:"レアパラレル",          searchEN:"Rare Parallel",     color:C.sky},
+      {id:"SR",     label:"Super Rare",         searchJP:"スーパーレア",          searchEN:"Super Rare",        color:C.butterDk},
+      {id:"UR",     label:"Ultra Rare",         searchJP:"ウルトラレア",          searchEN:"Ultra Rare",        color:C.peachDk},
+      {id:"ULR",    label:"Ultimate Rare (Relief)",searchJP:"アルティメットレア レリーフ", searchEN:"Ultimate Rare",color:C.roseDk},
+      {id:"SER",    label:"Secret Rare",        searchJP:"シークレットレア",      searchEN:"Secret Rare",       color:C.coral},
+      {id:"PSE",    label:"Prismatic Secret Rare",searchJP:"プリズマティックシークレットレア",searchEN:"Prismatic Secret Rare",color:C.rose},
+      // NEW 2025 rarities
+      {id:"OFPSE",  label:"Overframe PSE",      searchJP:"オーバーフレーム プリズマ", searchEN:"Overframe Prismatic Secret",color:C.roseDk},
+      {id:"GMR",    label:"Grandmaster Rare",   searchJP:"グランドマスターレア",   searchEN:"Grandmaster Rare",  color:C.coral},
+      {id:"20TH",   label:"20th Secret Rare",   searchJP:"20thシークレットレア",   searchEN:"20th Secret Rare",  color:C.lav},
+      {id:"QCSE",   label:"Quarter Century Secret",searchJP:"クォーターセンチュリーシークレットレア",searchEN:"Quarter Century Secret",color:C.butterDk},
+      {id:"GR",     label:"Ghost Rare",         searchJP:"ゴーストレア",          searchEN:"Ghost Rare",        color:C.lavDk},
+      {id:"KC",     label:"Kings Court",        searchJP:"コレクターズレア",      searchEN:"Collector Rare",    color:C.rose},
+      {id:"HOL",    label:"Holographic",        searchJP:"ホログラフィックレア",   searchEN:"Holographic",       color:C.lavDk},
+      {id:"ORsr",   label:"Overrush Rare",      searchJP:"オーバーラッシュレア",   searchEN:"Overrush Rare",     color:C.coral},
     ],
-    // English TCG
     EN: [
-      {id:"C",    label:"C",       full:"Common",              color:C.dim},
-      {id:"R",    label:"R",       full:"Rare",                color:C.skyDk},
-      {id:"SR",   label:"SR",      full:"Super Rare",          color:C.butterDk},
-      {id:"UR",   label:"UR",      full:"Ultra Rare",          color:C.peachDk},
-      {id:"UtR",  label:"UtR",     full:"Ultimate Rare",       color:C.roseDk},
-      {id:"ScR",  label:"ScR",     full:"Secret Rare",         color:C.coral},
-      {id:"PScR", label:"PScR",    full:"Prismatic Secret",    color:C.rose},
-      {id:"StR",  label:"StR",     full:"Starlight Rare",      color:C.sageDk},
-      {id:"CR",   label:"CR",      full:"Collector's Rare",    color:C.lav},
-      {id:"GR",   label:"GR",      full:"Ghost Rare",          color:C.lavDk},
-      {id:"QCSR", label:"QCSR",    full:"Quarter Century Secret", color:C.butterDk},
-      {id:"GoldR",label:"Gold",    full:"Gold Rare",           color:C.butter},
-      {id:"PlatR",label:"PltR",    full:"Platinum Rare",       color:C.skyDk},
+      {id:"C",      label:"Common",             searchJP:"コモン",               searchEN:"Common",            color:C.dim},
+      {id:"R",      label:"Rare",               searchJP:"レア",                 searchEN:"Rare",              color:C.skyDk},
+      {id:"SR",     label:"Super Rare",         searchJP:"スーパーレア",          searchEN:"Super Rare",        color:C.butterDk},
+      {id:"UR",     label:"Ultra Rare",         searchJP:"ウルトラレア",          searchEN:"Ultra Rare",        color:C.peachDk},
+      {id:"UtR",    label:"Ultimate Rare",      searchJP:"アルティメットレア",    searchEN:"Ultimate Rare",     color:C.roseDk},
+      {id:"ScR",    label:"Secret Rare",        searchJP:"シークレットレア",      searchEN:"Secret Rare",       color:C.coral},
+      {id:"PScR",   label:"Prismatic Secret Rare",searchJP:"プリズマティックシークレットレア",searchEN:"Prismatic Secret Rare",color:C.rose},
+      {id:"StR",    label:"Starlight Rare",     searchJP:"スターライトレア",      searchEN:"Starlight Rare",    color:C.sageDk},
+      {id:"CR",     label:"Collector's Rare",   searchJP:"コレクターズレア",      searchEN:"Collector's Rare",  color:C.lav},
+      {id:"GR",     label:"Ghost Rare",         searchJP:"ゴーストレア",          searchEN:"Ghost Rare",        color:C.lavDk},
+      {id:"QCSR",   label:"Quarter Century Secret",searchJP:"クォーターセンチュリーシークレットレア",searchEN:"Quarter Century Secret",color:C.butterDk},
+      {id:"GoldR",  label:"Gold Rare",          searchJP:"ゴールドレア",          searchEN:"Gold Rare",         color:C.butter},
+      {id:"PlatR",  label:"Platinum Rare",      searchJP:"プラチナレア",          searchEN:"Platinum Rare",     color:C.skyDk},
     ],
   },
 };
@@ -201,168 +199,223 @@ const RARITIES = {
 const TCG_SLUG = { onepiece:"opc", yugioh:"ygo" };
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   DEEP-LINK BUILDERS — rarity-sensitive search URLs that actually work.
-   These open in the user's browser so they see REAL live data from each site.
-
-   Rationale: scraping Mercari/eBay/Yuyu-tei from a server reliably fails
-   (CORS, Cloudflare, client-side rendering, bot detection). But directly
-   opening the search URL in a browser ALWAYS works. This is what actually
-   works in practice — tested live in user screenshots.
+   SEARCH LINK BUILDER — rarity-sensitive, uses FULL rarity name in the
+   chosen language, always with card name (in chosen language) + card number.
 ═══════════════════════════════════════════════════════════════════════════ */
-function buildSearchLinks({ cardId, cardName, rarityLabel, tcg, language, setSlug }) {
+function buildSearchLinks({ cardId, cardNameJP, cardNameEN, rarityOpt, tcg, language, setSlug }) {
   const q = (s) => encodeURIComponent(s);
   const id = cardId || "";
-  const nm = cardName || "";
-  const rar = rarityLabel || "";
-  // For rarity-sensitive queries, combine card number + name + rarity
-  const rarityQuery = (s) => [s, rar].filter(Boolean).join(" ");
+
+  // Name token — prefer JP for JP cards, EN for EN cards
+  const nameJP = cardNameJP || cardNameEN || "";
+  const nameEN = cardNameEN || cardNameJP || "";
+  const nameForJPSearch = nameJP || nameEN;   // JP sites search best with JP name
+  const nameForENSearch = nameEN || nameJP;   // EN sites with EN name
+
+  // Full rarity name in appropriate language
+  const rarityJP = rarityOpt?.searchJP || "";
+  const rarityEN = rarityOpt?.searchEN || "";
+
+  // Primary query for JP marketplaces: cardNumber + JP name + JP rarity
+  const jpQuery    = [id, nameForJPSearch, rarityJP].filter(Boolean).join(" ");
+  // Primary query for EN marketplaces: cardNumber + EN name + EN rarity
+  const enQuery    = [id, nameForENSearch, rarityEN].filter(Boolean).join(" ");
+  // Card-ID-only query (fallback — broader result set)
+  const idOnlyQuery = id;
 
   const links = [];
 
-  // ── MERCARI JP ──────────────────────────────────────────────────────────
-  // Sold listings (last sold prices, rarity-aware)
-  const mercariSoldQ = rarityQuery(`${id} ${nm}`.trim());
+  // ── MERCARI JP ─────────────────────────────────────────────
   links.push({
     id: "mercari-sold",
-    name: "Mercari JP · Last sold",
+    marketplace: "mercari",
+    name: "Mercari JP · Sold",
     icon: "🟠", color: C.roseDk,
     category: "sold",
-    url: `https://jp.mercari.com/search?keyword=${q(mercariSoldQ)}&status=sold_out&sort=created_time&order=desc`,
-    note: "Sold listings by card # + rarity",
+    query: jpQuery,
+    url: `https://jp.mercari.com/search?keyword=${q(jpQuery)}&status=sold_out&sort=created_time&order=desc`,
+    note: "Last sold listings",
   });
-  // Active listings
   links.push({
     id: "mercari-active",
-    name: "Mercari JP · Current",
+    marketplace: "mercari",
+    name: "Mercari JP · Active",
     icon: "🟠", color: C.roseDk,
     category: "active",
-    url: `https://jp.mercari.com/search?keyword=${q(mercariSoldQ)}&status=on_sale&sort=price&order=asc`,
-    note: "Cheapest active listings",
+    query: jpQuery,
+    url: `https://jp.mercari.com/search?keyword=${q(jpQuery)}&status=on_sale&sort=price&order=asc`,
+    note: "Currently for sale",
   });
 
-  // ── YAHOO AUCTIONS JP ───────────────────────────────────────────────────
-  // Closed / ended auctions = last-sold prices
+  // ── YAHOO AUCTIONS JP ───────────────────────────────────────
   links.push({
     id: "yahoo-closed",
-    name: "Yahoo Auctions JP · Ended",
+    marketplace: "yahoo",
+    name: "Yahoo Auctions · Ended",
     icon: "🅾", color: C.lav,
     category: "sold",
-    url: `https://auctions.yahoo.co.jp/closedsearch/closedsearch?p=${q(mercariSoldQ)}&n=50`,
-    note: "Closed auctions (ended prices)",
+    query: jpQuery,
+    url: `https://auctions.yahoo.co.jp/closedsearch/closedsearch?p=${q(jpQuery)}&n=50`,
+    note: "Completed auctions",
   });
   links.push({
     id: "yahoo-active",
-    name: "Yahoo Auctions JP · Active",
+    marketplace: "yahoo",
+    name: "Yahoo Auctions · Live",
     icon: "🅾", color: C.lav,
     category: "active",
-    url: `https://auctions.yahoo.co.jp/search/search?p=${q(mercariSoldQ)}&n=50`,
-    note: "Active auctions",
+    query: jpQuery,
+    url: `https://auctions.yahoo.co.jp/search/search?p=${q(jpQuery)}&n=50`,
+    note: "Live auctions right now",
   });
 
-  // ── YUYU-TEI (buyback & retail) ─────────────────────────────────────────
+  // ── YUYU-TEI (set-level pages) ──────────────────────────────
   if (setSlug) {
     links.push({
       id: "yuyutei-buy",
-      name: "Yuyu-tei · 買取 (shop buys)",
+      marketplace: "yuyutei",
+      name: "Yuyu-tei · Buy-back (買取)",
       icon: "🏯", color: C.coral,
       category: "sold",
+      query: idOnlyQuery,
       url: `https://yuyu-tei.jp/buy/${TCG_SLUG[tcg]}/s/${setSlug.toLowerCase()}`,
-      note: "Shop buyback price — guaranteed sell",
+      note: "Shop will pay this (guaranteed)",
     });
     links.push({
       id: "yuyutei-sell",
-      name: "Yuyu-tei · 販売 (retail)",
+      marketplace: "yuyutei",
+      name: "Yuyu-tei · Retail (販売)",
       icon: "🏯", color: C.coral,
       category: "active",
+      query: idOnlyQuery,
       url: `https://yuyu-tei.jp/sell/${TCG_SLUG[tcg]}/s/${setSlug.toLowerCase()}`,
-      note: "Shop retail — verified market",
-    });
-  } else {
-    // Fallback — top-level search
-    links.push({
-      id: "yuyutei-search",
-      name: "Yuyu-tei · Search",
-      icon: "🏯", color: C.coral,
-      category: "active",
-      url: `https://yuyu-tei.jp/top/${TCG_SLUG[tcg]}`,
-      note: "Browse Yuyu-tei shop",
+      note: "Shop retail price",
     });
   }
+  // Yuyu-tei global search by card number
+  links.push({
+    id: "yuyutei-search",
+    marketplace: "yuyutei",
+    name: "Yuyu-tei · Search",
+    icon: "🏯", color: C.coral,
+    category: "active",
+    query: idOnlyQuery,
+    url: `https://yuyu-tei.jp/top/${TCG_SLUG[tcg]}/search?word=${q(id)}`,
+    note: "Search by card number",
+  });
 
-  // ── eBay ─────────────────────────────────────────────────────────────────
-  // Sold + Completed listings with rarity-sensitive query
-  const ebayQ = language === "JP"
-    ? [id, rar, "Japanese"].filter(Boolean).join(" ")
-    : [id, nm, rar].filter(Boolean).join(" ");
+  // ── eBay ────────────────────────────────────────────────────
+  const ebayQuery = language === "JP"
+    ? [id, nameForENSearch, rarityEN, "Japanese"].filter(Boolean).join(" ")
+    : enQuery;
   links.push({
     id: "ebay-sold",
+    marketplace: "ebay",
     name: "eBay · Sold listings",
     icon: "🛒", color: C.butterDk,
     category: "sold",
-    url: `https://www.ebay.com/sch/i.html?_nkw=${q(ebayQ)}&LH_Sold=1&LH_Complete=1&_ipg=240&_sop=13`,
-    note: "Completed sales worldwide",
+    query: ebayQuery,
+    url: `https://www.ebay.com/sch/i.html?_nkw=${q(ebayQuery)}&LH_Sold=1&LH_Complete=1&_ipg=240&_sop=13`,
+    note: "Completed sales (global)",
   });
   links.push({
     id: "ebay-active",
+    marketplace: "ebay",
     name: "eBay · Active listings",
     icon: "🛒", color: C.butterDk,
     category: "active",
-    url: `https://www.ebay.com/sch/i.html?_nkw=${q(ebayQ)}&_ipg=240&_sop=15`,
-    note: "Current listings, cheapest first",
+    query: ebayQuery,
+    url: `https://www.ebay.com/sch/i.html?_nkw=${q(ebayQuery)}&_ipg=240&_sop=15`,
+    note: "Current listings",
   });
 
-  // ── TCGPlayer (EN only) ─────────────────────────────────────────────────
+  // ── TCGPlayer (EN only) ─────────────────────────────────────
   if (language === "EN") {
+    const tcgPlayerQuery = enQuery;
     links.push({
       id: "tcgplayer",
+      marketplace: "tcgplayer",
       name: "TCGPlayer · Prices",
       icon: "🎯", color: C.skyDk,
       category: "active",
-      url: `https://www.tcgplayer.com/search/all/product?q=${q(id + " " + nm)}&productLineName=${tcg==="onepiece"?"one-piece":"yugioh"}`,
+      query: tcgPlayerQuery,
+      url: `https://www.tcgplayer.com/search/all/product?q=${q(tcgPlayerQuery)}&productLineName=${tcg==="onepiece"?"one-piece":"yugioh"}`,
       note: "US market retail",
     });
   }
 
-  // ── snkrdunk (for One Piece DON!! cards specifically) ───────────────────
-  if (tcg === "onepiece") {
+  // ── Cardmarket (Yu-Gi-Oh! EU) ───────────────────────────────
+  if (tcg === "yugioh") {
     links.push({
-      id: "snkrdunk",
-      name: "snkrdunk JP",
-      icon: "👟", color: C.sageDk,
-      category: "both",
-      url: `https://snkrdunk.com/search?keyword=${q(id + " " + nm)}`,
-      note: "Popular for DON!! and graded",
+      id: "cardmarket",
+      marketplace: "cardmarket",
+      name: "Cardmarket · EU prices",
+      icon: "🇪🇺", color: "#B8860B",
+      category: "active",
+      query: enQuery,
+      url: `https://www.cardmarket.com/en/YuGiOh/Products/Search?searchString=${q(enQuery)}`,
+      note: "European market",
     });
   }
 
-  // ── PriceCharting ───────────────────────────────────────────────────────
+  // ── snkrdunk (One Piece) ────────────────────────────────────
+  if (tcg === "onepiece") {
+    links.push({
+      id: "snkrdunk",
+      marketplace: "snkrdunk",
+      name: "snkrdunk · Graded + DON!!",
+      icon: "👟", color: C.sageDk,
+      category: "sold",
+      query: jpQuery,
+      url: `https://snkrdunk.com/search?keyword=${q(jpQuery)}`,
+      note: "Popular for DON!! / graded",
+    });
+  }
+
+  // ── PriceCharting ───────────────────────────────────────────
   links.push({
     id: "pricecharting",
+    marketplace: "pricecharting",
     name: "PriceCharting · History",
     icon: "📈", color: C.sageDk,
     category: "sold",
-    url: `https://www.pricecharting.com/search-products?q=${q(id + " " + nm + " " + rar)}`,
-    note: "Multi-source sale history",
+    query: enQuery,
+    url: `https://www.pricecharting.com/search-products?q=${q(enQuery)}`,
+    note: "Multi-source sales history",
   });
 
-  // ── Limitless TCG (card info) ───────────────────────────────────────────
+  // ── DB info links ───────────────────────────────────────────
   if (tcg === "onepiece") {
     links.push({
       id: "limitless",
-      name: "Limitless · Card info",
+      marketplace: "info",
+      name: "Limitless TCG · Card page",
       icon: "♾", color: C.lavDk,
       category: "info",
+      query: id,
       url: `https://onepiece.limitlesstcg.com/cards/${id}`,
-      note: "Full card database page",
+      note: "Full card details",
+    });
+    links.push({
+      id: "optcgapi-page",
+      marketplace: "info",
+      name: "OPTCGAPI · Analytics",
+      icon: "📊", color: C.sageDk,
+      category: "info",
+      query: id,
+      url: `https://optcgapi.com/analytics/card/${id}/`,
+      note: "Price history charts",
     });
   } else if (tcg === "yugioh") {
     links.push({
       id: "ygoprodeck",
-      name: "YGOProDeck · Card info",
+      marketplace: "info",
+      name: "YGOProDeck · Card page",
       icon: "🎴", color: C.lavDk,
       category: "info",
+      query: id,
       url: `https://ygoprodeck.com/card-search/?cardSet=${q(id)}`,
-      note: "Full card database page",
+      note: "Full card details",
     });
   }
 
@@ -370,14 +423,15 @@ function buildSearchLinks({ cardId, cardName, rarityLabel, tcg, language, setSlu
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   LIVE CARD LOOKUP — calls our /api/cardlookup → apitcg.com + ygoprodeck
-   Returns real card data (name, description, image, etc.) when card is found
+   LIVE CARD LOOKUP — calls /api/cardlookup v3
+   Returns card name (JP + EN), description, image, and PRICE SAMPLES
+   from free APIs (YGOProDeck card_prices, OPTCGAPI TCGPlayer price, etc.)
 ═══════════════════════════════════════════════════════════════════════════ */
 async function lookupCard({ cardId, tcg, language, fallbackName }) {
   try {
     const res = await fetch(
       `/api/cardlookup?id=${encodeURIComponent(cardId)}&tcg=${tcg}&lang=${language}`,
-      { signal: AbortSignal.timeout(10000) }
+      { signal: AbortSignal.timeout(12000) }
     );
     if (!res.ok) throw new Error("API " + res.status);
     const data = await res.json();
@@ -386,6 +440,7 @@ async function lookupCard({ cardId, tcg, language, fallbackName }) {
         ok: true,
         cardId: data.cardId || cardId,
         name: data.name || fallbackName || `Card ${cardId}`,
+        nameEN: data.nameEN || data.name || "",
         nameJP: data.nameJP || "",
         set: data.set || "",
         setName: data.setName || "",
@@ -399,19 +454,22 @@ async function lookupCard({ cardId, tcg, language, fallbackName }) {
         atk: data.atk, def: data.def, level: data.level,
         attribute: data.attribute, race: data.race, archetype: data.archetype,
         dbSources: data.sources || [],
+        priceSamples: data.priceSamples || [],
         setSlug: inferSetSlug(cardId, tcg),
       };
     }
   } catch(e) {
     console.warn("Card lookup failed:", e.message);
   }
-  // No fake fallback — just return minimal shell with fallback name
   return {
     ok: false,
     cardId,
     name: fallbackName || `Card ${cardId}`,
+    nameEN: fallbackName || "",
+    nameJP: "",
     setSlug: inferSetSlug(cardId, tcg),
     dbSources: [],
+    priceSamples: [],
   };
 }
 
@@ -430,7 +488,7 @@ async function boboaIdentify({ imageDataUrl, tcgType, language }) {
   const base64 = imageDataUrl.split(",")[1];
   const tcg = TCG_TYPES.find(t => t.id === tcgType);
   const rarities = RARITIES[tcgType]?.[language] || [];
-  const raritiesList = rarities.map(r => `${r.id} (${r.full})`).join(", ");
+  const raritiesList = rarities.map(r => `${r.id} (${r.label})`).join(", ");
 
   const prompt = `You are BoBoa Scanner — TCG card identification engine.
 
@@ -1379,8 +1437,10 @@ function RarityScreen({ photos, card, ctx, onConfirm, onBack, onOpenImage }) {
                       boxShadow: sel ? `0 4px 14px ${rgba(r.color,.3)}` : "none",
                       transition:"all .15s",
                     }}>
-                      <div className="display" style={{ fontSize:14, fontWeight:700, marginBottom:2 }}>{r.label}</div>
-                      <div style={{ fontSize:10.5, opacity: sel ? 0.9 : 0.65 }}>{r.full}</div>
+                      <div className="display" style={{ fontSize:13.5, fontWeight:700, lineHeight:1.2 }}>{r.label}</div>
+                      <div style={{ fontSize:10, opacity: sel ? 0.85 : 0.55, marginTop:3 }} className="mono">
+                        {ctx.lang === "JP" ? r.searchJP : r.searchEN}
+                      </div>
                     </button>
                   );
                 })}
@@ -1406,22 +1466,152 @@ function RarityScreen({ photos, card, ctx, onConfirm, onBack, onOpenImage }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   MARKETPLACE TAB — filter pills + deep-link cards per marketplace
+═══════════════════════════════════════════════════════════════════════════ */
+function MarketplaceTab({ links, marketplaces, card, rarOpt }) {
+  const [filter, setFilter] = useState("all");
+
+  const MARKETPLACE_META = {
+    all:          { label:"All",           icon:"🌐", color:C.ink },
+    mercari:      { label:"Mercari JP",    icon:"🟠", color:C.roseDk },
+    yahoo:        { label:"Yahoo Auctions",icon:"🅾", color:C.lav },
+    yuyutei:      { label:"Yuyu-tei",      icon:"🏯", color:C.coral },
+    ebay:         { label:"eBay",          icon:"🛒", color:C.butterDk },
+    tcgplayer:    { label:"TCGPlayer",     icon:"🎯", color:C.skyDk },
+    cardmarket:   { label:"Cardmarket",    icon:"🇪🇺", color:"#B8860B" },
+    snkrdunk:     { label:"snkrdunk",      icon:"👟", color:C.sageDk },
+    pricecharting:{ label:"PriceCharting", icon:"📈", color:C.sageDk },
+  };
+
+  const filtered = filter === "all" ? links : links.filter(l => l.marketplace === filter);
+  // Group by category within filtered results
+  const soldLinks   = filtered.filter(l => l.category === "sold");
+  const activeLinks = filtered.filter(l => l.category === "active");
+
+  return (
+    <>
+      {/* Marketplace filter pills */}
+      <div className="r1" style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:4, marginBottom:2 }}>
+        {["all", ...marketplaces].map(id => {
+          const m = MARKETPLACE_META[id] || { label:id, icon:"•", color:C.sub };
+          const sel = filter === id;
+          return (
+            <button key={id} onClick={() => setFilter(id)} style={{
+              background: sel ? m.color : C.surf,
+              color: sel ? "#fff" : C.ink,
+              border: `1.5px solid ${sel ? m.color : C.bord}`,
+              borderRadius: 99, padding: "7px 13px",
+              fontSize: 12, fontWeight: 600, whiteSpace: "nowrap",
+              flexShrink: 0, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 6,
+            }}>
+              <span>{m.icon}</span>{m.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Query note */}
+      <div className="r2" style={{ background:rgba(C.peach,0.08), border:`1px solid ${rgba(C.peachDk,0.2)}`, borderRadius:10, padding:"10px 12px", fontSize:11.5, color:C.sub, lineHeight:1.55 }}>
+        <div style={{ fontSize:10, fontWeight:700, color:C.peachDk, letterSpacing:"0.1em", marginBottom:3 }}>SEARCH QUERY</div>
+        <div className="mono" style={{ color:C.ink, fontSize:11, wordBreak:"break-all" }}>
+          {card.cardId}{" "}
+          {card.language === "JP" ? (card.nameJP || card.nameEN || card.name) : (card.nameEN || card.name)}{" "}
+          <span style={{color:C.peachDk, fontWeight:700}}>
+            {card.language === "JP" ? rarOpt?.searchJP : rarOpt?.searchEN}
+          </span>
+        </div>
+      </div>
+
+      {/* Sold section */}
+      {soldLinks.length > 0 && (
+        <>
+          <div className="r3" style={{ fontSize:11, fontWeight:700, color:C.sub, letterSpacing:"0.1em", textTransform:"uppercase", padding:"6px 4px 0" }}>
+            ◆ Last Sold
+          </div>
+          {soldLinks.map((link, i) => (
+            <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className={`r${Math.min(i+3, 5)}`}>
+              <Card s={{ borderColor: rgba(link.color, 0.4) }}>
+                <div style={{ padding:"13px 16px", display:"flex", alignItems:"center", gap:12 }}>
+                  <div style={{ fontSize:24, flexShrink:0 }}>{link.icon}</div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div className="display" style={{ fontSize:14.5, fontWeight:700, color:link.color, marginBottom:2 }}>{link.name}</div>
+                    <div style={{ fontSize:11.5, color:C.sub, marginBottom:3 }}>{link.note}</div>
+                    <div className="mono" style={{ fontSize:10, color:C.dim, wordBreak:"break-all" }}>🔍 {link.query}</div>
+                  </div>
+                  <div style={{ fontSize:18, color:C.dim }}>›</div>
+                </div>
+              </Card>
+            </a>
+          ))}
+        </>
+      )}
+
+      {/* Active section */}
+      {activeLinks.length > 0 && (
+        <>
+          <div className="r4" style={{ fontSize:11, fontWeight:700, color:C.sub, letterSpacing:"0.1em", textTransform:"uppercase", padding:"12px 4px 0" }}>
+            ◇ Current Listings
+          </div>
+          {activeLinks.map((link, i) => (
+            <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className={`r${Math.min(i+3, 5)}`}>
+              <Card s={{ borderColor: rgba(link.color, 0.4) }}>
+                <div style={{ padding:"13px 16px", display:"flex", alignItems:"center", gap:12 }}>
+                  <div style={{ fontSize:24, flexShrink:0 }}>{link.icon}</div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div className="display" style={{ fontSize:14.5, fontWeight:700, color:link.color, marginBottom:2 }}>{link.name}</div>
+                    <div style={{ fontSize:11.5, color:C.sub, marginBottom:3 }}>{link.note}</div>
+                    <div className="mono" style={{ fontSize:10, color:C.dim, wordBreak:"break-all" }}>🔍 {link.query}</div>
+                  </div>
+                  <div style={{ fontSize:18, color:C.dim }}>›</div>
+                </div>
+              </Card>
+            </a>
+          ))}
+        </>
+      )}
+
+      {filtered.length === 0 && (
+        <div className="r3" style={{ padding:"40px 20px", textAlign:"center", color:C.dim, fontSize:13 }}>
+          No {MARKETPLACE_META[filter]?.label || filter} links for this card.
+        </div>
+      )}
+
+      {/* Honest caveat on embedded thumbnails */}
+      <div className="r5" style={{ background:rgba(C.butter,0.12), border:`1px solid ${rgba(C.butterDk,0.3)}`, borderRadius:10, padding:"12px 14px", fontSize:11.5, color:C.sub, lineHeight:1.65, marginTop:4 }}>
+        <div style={{ fontSize:12, fontWeight:700, color:C.butterDk, marginBottom:5 }}>ℹ️ About embedded listings</div>
+        Mercari, Yahoo, eBay and Yuyu-tei all block server scrapers (Cloudflare / bot detection).
+        Tapping any link above opens the real live page in your browser — that's where you see the thumbnails and exact per-listing prices.
+        For in-app embedded thumbnails we'd need a paid scraping API (~$4 per 1,000 listings via Apify).
+      </div>
+    </>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    SCREEN: RESULT — deep-link to Mercari/Yahoo/Yuyu-tei/eBay
 ═══════════════════════════════════════════════════════════════════════════ */
 function ResultScreen({ photos, card, user, onRescan, onOpenImage }) {
-  const [tab, setTab] = useState("sold");
+  const [tab, setTab] = useState("prices");
 
   const rarityList = RARITIES[card.tcgType]?.[card.language] || [];
   const rarOpt = rarityList.find(r => r.id === card.rarity) || rarityList[0];
   const tcg = TCG_TYPES.find(t => t.id === card.tcgType);
 
   const links = buildSearchLinks({
-    cardId: card.cardId, cardName: card.name, rarityLabel: rarOpt?.label || card.rarity,
+    cardId: card.cardId,
+    cardNameJP: card.nameJP,
+    cardNameEN: card.nameEN || card.name,
+    rarityOpt: rarOpt,
     tcg: card.tcgType, language: card.language, setSlug: card.setSlug,
   });
-  const soldLinks    = links.filter(l => l.category === "sold" || l.category === "both");
-  const activeLinks  = links.filter(l => l.category === "active" || l.category === "both");
+  const soldLinks    = links.filter(l => l.category === "sold");
+  const activeLinks  = links.filter(l => l.category === "active");
   const infoLinks    = links.filter(l => l.category === "info");
+  const priceSamples = card.priceSamples || [];
+
+  // Marketplaces present in link list — for filter tabs
+  const marketplaces = [...new Set(links.filter(l => l.category !== "info").map(l => l.marketplace))];
 
   return (
     <div style={{ maxWidth:430, margin:"0 auto", background:C.bg, minHeight:"100vh" }}>
@@ -1433,7 +1623,7 @@ function ResultScreen({ photos, card, user, onRescan, onOpenImage }) {
           <SBtn onClick={onRescan}>📷 Scan</SBtn>
           <div style={{ display:"flex", gap:4 }}>
             {card.ok ? <Pill ch="✓ DB Match" color={C.sageDk}/> : <Pill ch="AI Only" color={C.butterDk}/>}
-            <Pill ch={rarOpt?.label || card.rarity} color={rarOpt?.color || C.skyDk}/>
+            {priceSamples.length > 0 && <Pill ch={`${priceSamples.length} prices`} color={C.peachDk}/>}
           </div>
         </div>
 
@@ -1448,7 +1638,7 @@ function ResultScreen({ photos, card, user, onRescan, onOpenImage }) {
             </div>
             <div className="display" style={{ fontSize:20, fontWeight:800, lineHeight:1.1, marginBottom:5 }}>{card.name}</div>
             <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:5 }}>
-              <Pill ch={rarOpt?.full || card.rarity} color={rarOpt?.color} s={{fontSize:10}}/>
+              <Pill ch={rarOpt?.label || card.rarity} color={rarOpt?.color} s={{fontSize:10}}/>
               <Pill ch={card.language} color={C.skyDk} s={{fontSize:10}}/>
               {tcg && <Pill ch={tcg.shortName} color={tcg.color} s={{fontSize:10}}/>}
             </div>
@@ -1478,73 +1668,86 @@ function ResultScreen({ photos, card, user, onRescan, onOpenImage }) {
         {/* Tabs */}
         <div style={{ display:"flex", borderTop:`1px solid ${C.bord}`, margin:"0 -16px" }}>
           {[
-            { id:"sold",   label:"Last Sold",       count: soldLinks.length },
-            { id:"active", label:"Current Listings",count: activeLinks.length },
-            { id:"info",   label:"Card Info",       count: null },
+            { id:"prices",  label:"Prices",    count: priceSamples.length || null },
+            { id:"search",  label:"Marketplaces", count: links.filter(l=>l.category!=="info").length },
+            { id:"info",    label:"Card Info", count: null },
           ].map(t => (
             <button key={t.id} onClick={() => setTab(t.id)} style={{
               flex:1, background:"none", border:"none",
               borderBottom:`2px solid ${tab===t.id?C.peachDk:"transparent"}`,
-              color:tab===t.id?C.peachDk:C.sub, padding:"11px 2px", fontSize:12,
+              color:tab===t.id?C.peachDk:C.sub, padding:"11px 2px", fontSize:12.5,
               fontWeight: tab===t.id ? 700 : 500, cursor:"pointer",
             }}>
-              {t.label}{t.count ? <span style={{ opacity:0.5, marginLeft:4 }}>({t.count})</span> : ""}
+              {t.label}{t.count ? <span style={{ opacity:0.55, marginLeft:4 }}>·{t.count}</span> : ""}
             </button>
           ))}
         </div>
       </div>
 
       <div style={{ padding:"14px 16px 100px", display:"flex", flexDirection:"column", gap:12 }}>
-        {/* ── LAST SOLD tab ── */}
-        {tab === "sold" && (
+
+        {/* ═════ PRICES tab — real samples from free APIs ═════ */}
+        {tab === "prices" && (
           <>
-            <div className="r1" style={{ background:rgba(C.peach,0.1), border:`1px solid ${rgba(C.peachDk,0.25)}`, borderRadius:12, padding:"11px 14px", fontSize:12.5, color:C.sub, lineHeight:1.55 }}>
-              <strong style={{ color:C.ink }}>🔗 Tap any source to view real last-sold prices live.</strong> Queries are already formatted with the card number and rarity.
-            </div>
-            {soldLinks.map((link, i) => (
-              <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className={`r${Math.min(i+1, 5)}`}>
-                <Card s={{ borderColor: rgba(link.color, 0.35) }}>
-                  <div style={{ padding:"14px 16px", display:"flex", alignItems:"center", gap:12 }}>
-                    <div style={{ fontSize:26 }}>{link.icon}</div>
-                    <div style={{ flex:1 }}>
-                      <div className="display" style={{ fontSize:15, fontWeight:700, color:link.color, marginBottom:2 }}>{link.name}</div>
-                      <div style={{ fontSize:12, color:C.sub }}>{link.note}</div>
-                    </div>
-                    <div style={{ fontSize:18, color:C.dim }}>›</div>
-                  </div>
-                </Card>
-              </a>
-            ))}
-            <div className="r5" style={{ fontSize:11, color:C.dim, padding:"12px 4px 0", lineHeight:1.6, textAlign:"center" }}>
-              Query: <span className="mono" style={{color:C.sub}}>{card.cardId} {card.name} {rarOpt?.label}</span>
+            {priceSamples.length > 0 ? (
+              <>
+                <div className="r1" style={{ background:rgba(C.sage,0.12), border:`1px solid ${rgba(C.sageDk,0.25)}`, borderRadius:12, padding:"12px 14px", fontSize:12.5, color:C.sub, lineHeight:1.55 }}>
+                  <strong style={{ color:C.sageDk }}>✓ {priceSamples.length} real price sources found</strong> from free public APIs (YGOProDeck, OPTCGAPI) — updated daily.
+                </div>
+                {priceSamples.slice(0, 8).map((p, i) => (
+                  <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className={`r${Math.min(i+2, 5)}`}>
+                    <Card s={{ borderColor: rgba(p.color || C.peach, 0.4) }}>
+                      <div style={{ padding:"14px 16px", display:"flex", alignItems:"center", gap:12 }}>
+                        <div style={{ fontSize:26 }}>{p.icon}</div>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div className="display" style={{ fontSize:15, fontWeight:700, color:p.color || C.ink, marginBottom:2 }}>{p.source}</div>
+                          <div style={{ fontSize:10.5, color:C.dim }}>
+                            via {p.via} · {p.freshness || "cached"}
+                          </div>
+                        </div>
+                        <div style={{ textAlign:"right" }}>
+                          <div className="display" style={{ fontSize:17, fontWeight:800, color:C.ink, lineHeight:1 }}>{fmtTHB(p.priceTHB)}</div>
+                          <div className="mono" style={{ fontSize:11, color:C.sub, marginTop:2 }}>
+                            {fmtUSD(p.priceUSD)}
+                            {p.currency && p.currency !== "USD" && p.currency !== "THB" && (
+                              <span style={{marginLeft:6, color:C.dim}}>
+                                {p.currency === "EUR" ? "€" : p.currency === "JPY" ? "¥" : p.currency}{p.priceNative?.toFixed(p.currency==="JPY"?0:2)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  </a>
+                ))}
+              </>
+            ) : (
+              <div className="r1" style={{ background:rgba(C.butter,0.14), border:`1px solid ${rgba(C.butterDk,0.35)}`, borderRadius:12, padding:"16px", fontSize:13, color:C.sub, lineHeight:1.65 }}>
+                <div style={{ fontSize:15, fontWeight:700, color:C.ink, marginBottom:6 }}>⚠ No API price data for this card</div>
+                Free APIs (YGOProDeck, OPTCGAPI) don't have pricing for this specific print yet.
+                Use the <strong style={{color:C.peachDk}}>Marketplaces</strong> tab to see live prices from Mercari, Yahoo, eBay, and Yuyu-tei.
+              </div>
+            )}
+
+            {/* Honest data source note */}
+            <div className="r5" style={{ fontSize:10.5, color:C.dim, lineHeight:1.65, padding:"12px 4px 0", textAlign:"center" }}>
+              Prices from YGOProDeck <span className="mono">card_prices</span> + OPTCGAPI <span className="mono">tcgplayer_price</span>.<br/>
+              For live per-listing data (Mercari/Yahoo), tap the <strong>Marketplaces</strong> tab.
             </div>
           </>
         )}
 
-        {/* ── CURRENT LISTINGS tab ── */}
-        {tab === "active" && (
-          <>
-            <div className="r1" style={{ background:rgba(C.sage,0.12), border:`1px solid ${rgba(C.sageDk,0.25)}`, borderRadius:12, padding:"11px 14px", fontSize:12.5, color:C.sub, lineHeight:1.55 }}>
-              <strong style={{ color:C.ink }}>🛒 Active listings available to buy right now.</strong> Sorted by cheapest first.
-            </div>
-            {activeLinks.map((link, i) => (
-              <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className={`r${Math.min(i+1, 5)}`}>
-                <Card s={{ borderColor: rgba(link.color, 0.35) }}>
-                  <div style={{ padding:"14px 16px", display:"flex", alignItems:"center", gap:12 }}>
-                    <div style={{ fontSize:26 }}>{link.icon}</div>
-                    <div style={{ flex:1 }}>
-                      <div className="display" style={{ fontSize:15, fontWeight:700, color:link.color, marginBottom:2 }}>{link.name}</div>
-                      <div style={{ fontSize:12, color:C.sub }}>{link.note}</div>
-                    </div>
-                    <div style={{ fontSize:18, color:C.dim }}>›</div>
-                  </div>
-                </Card>
-              </a>
-            ))}
-          </>
+        {/* ═════ MARKETPLACES tab — filter + deep-link cards ═════ */}
+        {tab === "search" && (
+          <MarketplaceTab
+            links={links.filter(l => l.category !== "info")}
+            marketplaces={marketplaces}
+            card={card}
+            rarOpt={rarOpt}
+          />
         )}
 
-        {/* ── INFO tab ── */}
+        {/* ═════ INFO tab ═════ */}
         {tab === "info" && (
           <>
             {card.image && (
@@ -1565,7 +1768,7 @@ function ResultScreen({ photos, card, user, onRescan, onOpenImage }) {
                   ["Name",        card.name],
                   ["JP Name",     card.nameJP],
                   ["Set",         card.setName ? `${card.setName}${card.set ? " · " + card.set : ""}` : card.set],
-                  ["Rarity",      `${rarOpt?.label || ""} — ${rarOpt?.full || ""}`.replace(/^ — $/, "—")],
+                  ["Rarity",      rarOpt?.label || card.rarity],
                   ["Language",    LANGUAGES.find(l => l.id === card.language)?.label],
                   ["Type",        card.type],
                   ["Color",       card.color],
